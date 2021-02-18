@@ -4,7 +4,6 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
-//#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,60 +15,14 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-
-#include <linux/hid.h>
-//#include <linux/usb/ch9.h>
-
 #include <pthread.h>
-
-//#include "ds4.h"
-//#include "dualsense.h"
-//#include "magicPro.h"
-
 
 #include <libusb.h>
 
-
 #include "raw-helper.h"
 
-
 /*----------------------------------------------------------------------*/
 
-#define VENDOR 0x054c
-#define PRODUCT 0x0ce6
-/*----------------------------------------------------------------------*/
-
-//struct usb_endpoint_descriptor usb_endpoints[4] = {
-//	{
-//		.bLength =		USB_DT_ENDPOINT_SIZE,
-//		.bDescriptorType =	USB_DT_ENDPOINT,
-//		.bEndpointAddress =	USB_DIR_IN | 0X04,
-//		.bmAttributes =		USB_ENDPOINT_XFER_INT,
-//		.wMaxPacketSize =	EP_MAX_PACKET_INT,
-//		.bInterval =		5,
-//	}, {
-//		.bLength =		USB_DT_ENDPOINT_SIZE,
-//		.bDescriptorType =	USB_DT_ENDPOINT,
-//		.bEndpointAddress =	USB_DIR_OUT | 0x03,
-//		.bmAttributes =		USB_ENDPOINT_XFER_INT,
-//		.wMaxPacketSize =	EP_MAX_PACKET_INT,
-//		.bInterval =		5,
-//	}, {
-//		.bLength =		9,
-//		.bDescriptorType =	5,
-//		.bEndpointAddress =	USB_DIR_IN | 0X02,
-//		.bmAttributes =		5,
-//		.wMaxPacketSize =	0x00c4,
-//		.bInterval =		4,
-//	}, {
-//		.bLength =		9,
-//		.bDescriptorType =	5,
-//		.bEndpointAddress =	USB_DIR_OUT | 0x01,
-//		.bmAttributes =		9,
-//		.wMaxPacketSize =	0x0188,
-//		.bInterval =		4,
-//	}
-//};
 bool assign_ep_address(struct usb_raw_ep_info *info,
 					   struct usb_endpoint_descriptor *ep) {
 	if (usb_endpoint_num(ep) != 0)
@@ -107,9 +60,6 @@ typedef struct {
 	bool keepRunning;	// thread management
 	
 	struct usb_endpoint_descriptor usb_endpoint;
-	uint8_t bmAttributes;
-	uint8_t bEndpointAddress;
-	uint16_t wMaxPacketSize;
 	
 	unsigned char* data;
 } EndpointInfo;
@@ -148,12 +98,10 @@ void process_eps_info(EndpointZeroInfo* epZeroInfo) {
 	
 	for (int e = 0; e < epZeroInfo->totalEndpoints; e++) {
 		for (int i = 0; i < num; i++) {
-//			if (assign_ep_address(&info.eps[i], &usb_endpoints[e]))
 			if (assign_ep_address(&info.eps[i], &epZeroInfo->mEndpointInfos[e].usb_endpoint))
 				continue;
 		}
-		
-//		int int_in_addr = usb_endpoint_num(&usb_endpoints[e]);
+
 		int int_in_addr = usb_endpoint_num(&epZeroInfo->mEndpointInfos[e].usb_endpoint);
 		assert(int_in_addr != 0);
 		printf("int_in: addr = %u\n", int_in_addr);
@@ -162,25 +110,11 @@ void process_eps_info(EndpointZeroInfo* epZeroInfo) {
 
 
 
-//libusb_device_handle *dev_handle;
-int len;
-
-int ep_int_in = -1;
-int ep_int_out = -1;
-int ep_int_in_audio = -1;
-int ep_int_out_audio = -1;
-char dummyBuffer[128];
+char dummyBuffer[4096];
 bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 				 struct usb_raw_control_io *io, bool *done) {
 	int r;
 	
-
-	
-//	if (event->ctrl.wIndex == 0x02 ||
-//		event->ctrl.wIndex == 0x03 ||
-//		event->ctrl.wIndex == 0x01 ) {
-	//		event->ctrl.wIndex = 0x00;
-	//	}
 	io->inner.length = event->ctrl.wLength;
 	if (event->ctrl.bRequestType & 0x80) {
 		printf("copying %d bytes\n", event->ctrl.wLength);
@@ -210,23 +144,9 @@ bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 	if( (event->ctrl.bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD &&
 	   event->ctrl.bRequest == USB_REQ_SET_CONFIGURATION) {
 		
-//			if (ep_int_in  < 0) {
-//				ep_int_in = usb_raw_ep_enable(fd, &usb_endpoints[0]);
-//				ep_int_in_audio = usb_raw_ep_enable(fd, &usb_endpoints[2]);
-//			}
-//			if (ep_int_out < 0) {
-//				ep_int_out = usb_raw_ep_enable(fd, &usb_endpoints[1]);
-//				ep_int_out_audio = usb_raw_ep_enable(fd, &usb_endpoints[3]);
-//			}
-//
-//			printf(" ---- ep_int_in = %d\n", ep_int_in);
-//			printf(" ---- ep_int_out = %d\n", ep_int_out);
-//			printf(" ---- ep_int_in_audio = %d\n", ep_int_in_audio);
-//		   printf(" ---- ep_int_out_audio = %d\n", ep_int_out_audio);
-		
 		for (int i = 0; i < info->totalEndpoints; i++) {
 			info->mEndpointInfos[i].ep_int = usb_raw_ep_enable(info->fd, &info->mEndpointInfos[i].usb_endpoint);
-			printf(" ---- 0x%02x ep_int = %d\n", info->mEndpointInfos[i].bEndpointAddress, info->mEndpointInfos[i].ep_int);
+			printf(" ---- 0x%02x ep_int = %d\n", info->mEndpointInfos[i].usb_endpoint.bEndpointAddress, info->mEndpointInfos[i].ep_int);
 		}
 		
 			usb_raw_vbus_draw(info->fd, 0x32*5);
@@ -310,203 +230,14 @@ void* ep0_loop_thread( void* data ) {
 	while(1)
 		ep0_loop(info);//fd);
 }
-/*
-void ep_int_in_audio_loop(int fd) {
-	struct usb_raw_int_io io;
-	io.inner.ep = ep_int_in_audio;// | 0X82;
-	io.inner.flags = 0;
-	io.inner.length = 0x00c4;
-	
-	int rv = usb_raw_ep_write(fd, (struct usb_raw_ep_io *)&io);
-	if (rv < 0) {
-		// ? error
-	}
-}
 
-void ep_int_out_audio_loop(int fd) {
-	struct usb_raw_int_io io;
-	io.inner.ep = ep_int_out_audio;// | 0X82;
-	io.inner.flags = 0;
-	io.inner.length = 0x0188;
-	
-	int rv = usb_raw_ep_read(fd, (struct usb_raw_ep_io *)&io);
-	if (rv < 0) {
-		// ? error
-	}
-}
-
-void ep_int_in_loop(int fd) {
-	//printf(" -- FINALLY in ep_int_in_loop\n");
-	struct usb_raw_int_io io;
-	io.inner.ep = ep_int_in;// | 0X04;
-	io.inner.flags = 0;
-	io.inner.length = 64;
-	
-	
-	
-//	static unsigned int button = 16;
-//
-//	inputReport01_t joy;
-//
-//
-//
-//	memset(&joy, 0, sizeof(joy));
-//	joy.reportId = 0x01;
-//
-//	*((unsigned int*)(8+(unsigned char*)&joy)) |= button;
-//
-//	if (button >= 0x80000000) {
-	//		button = 0x001;
-	//	} else {
-	//		button  = button << 1;
-	//	}
-	
-	//while (true) {
-	//		joy.BTN_GamePadButton5 = 1;
-	//		joy.BTN_GamePadButton1 = 0;
-	//	memcpy(&io.inner.data[0], &joy, sizeof(joy));
-	//printf(" -- sending...\n");
-	unsigned char data[64];
-	int transferred = 64;
-	int r = libusb_interrupt_transfer( dev_handle,
-									  0x84,
-									  data,
-									  64,
-									  &transferred,
-									  0 );
-	if (r != 0) {
-	//	printf("libusb_interrupt_transfer FAIL\n");
-		return;
-	}
-//	printf("Read %d from controller\n", transferred);
-	memcpy(&io.inner.data[0], &data, transferred);
-	//io.inner.length = transferred;
-	
-	int rv = usb_raw_ep_write(fd, (struct usb_raw_ep_io *)&io);
-	if (rv < 0) {
-		// error?
-	}
-	//printf("int_in: key down: %d\n", rv);
-	
-	//	if(0) {
-	//	io.inner.ep = ep_int_out;// | 0X04;
-	//	io.inner.flags = 0;
-	//	io.inner.length = 32;
-	//		rv = usb_raw_ep_read(fd, (struct usb_raw_ep_io *)&io);
-	//	printf("int_out: key down: %d - ", rv);
-	//	for (int i = 0; i < rv; i++) {
-	//		printf("%02x ", io.inner.data[i]);
-	//	}
-	//	printf("\n");
-	//	}
-	//		usleep(50000);
-	
-	//		joy.BTN_GamePadButton5 = 0;
-	//	joy.BTN_GamePadButton1 = 1;
-	//		memcpy(&io.inner.data[0], &joy, sizeof(joy));
-	//		rv = usb_raw_ep_write(fd, (struct usb_raw_ep_io *)&io);
-	//		printf("int_in: key up: %d\n", rv);
-	
-	//		usleep(500000);
-	//}
-}
-
-void ep_int_out_loop(int fd) {
-	//printf(" -- FINALLY in ep_int_in_loop\n");
-	struct usb_raw_int_io io;
-	
-	io.inner.ep = ep_int_out;// | 0X04;
-	io.inner.flags = 0;
-	io.inner.length = 48;//32;
-	
-	
-	
-	
-	
-	//inputReport01_t joy;
-	
-	
-	int rv = usb_raw_ep_read(fd, (struct usb_raw_ep_io *)&io);
-	printf("int_out: key down: %d - ", rv);
-	for (int i = 0; i < rv; i++) {
-		printf("%02x ", io.inner.data[i]);
-	}
-	printf("\n");
-	
-	unsigned char data[48];
-	int transferred = rv;
-	
-	memcpy(&data, &io.inner.data[0], transferred);
-	
-	int r = libusb_interrupt_transfer( dev_handle,
-									  0x03,
-									  data,
-									  rv,
-									  &transferred,
-									  0 );
-	if (r != 0) {
-	//	printf("libusb_interrupt_transfer FAIL\n");
-		return;
-	}
-}
-
-
-
-void* epin_loop_thread( void* data ) {
-	int fd = *(int*)data;
-	while(1) {
-		if (ep_int_in >= 0) {
-			ep_int_in_loop(fd);
-			//usleep(1000);
-		} else {
-			usleep(100000);
-		}
-	}
-}
-
-void* epout_loop_thread( void* data ) {
-	int fd = *(int*)data;
-	while(1) {
-		if (ep_int_out >= 0) {
-			ep_int_out_loop(fd);
-//			usleep(100);
-		} else {
-			usleep(100000);
-		}
-	}
-}
-
-void* epin_loop_thread_audio( void* data ) {
-	int fd = *(int*)data;
-	while(1) {
-		if (ep_int_in_audio >= 0) {
-			ep_int_in_audio_loop(fd);
-			//usleep(1000);
-		} else {
-			usleep(100000);
-		}
-	}
-}
-
-void* epout_loop_thread_audio( void* data ) {
-	int fd = *(int*)data;
-	while(1) {
-		if (ep_int_out_audio >= 0) {
-			ep_int_out_audio_loop(fd);
-//			usleep(100);
-		} else {
-			usleep(100000);
-		}
-	}
-}
-*/
 
 
 void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;//ep_int_in;// | 0X04;
 	io.inner.flags = 0;
-	io.inner.length = epInfo->wMaxPacketSize;
+	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
 	
 	int rv = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
 	printf("ep_out_work_interrupt(): %d - ", rv);
@@ -521,7 +252,7 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 	memcpy(epInfo->data, &io.inner.data[0], transferred);
 	
 	int r = libusb_interrupt_transfer(epInfo->deviceHandle,
-									  epInfo->bEndpointAddress,
+									  epInfo->usb_endpoint.bEndpointAddress,
 									  epInfo->data,
 									  rv,
 									  &transferred,
@@ -536,13 +267,13 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;//ep_int_in;// | 0X04;
 	io.inner.flags = 0;
-	io.inner.length = epInfo->wMaxPacketSize;
+	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
 	
-	int transferred = epInfo->wMaxPacketSize;
+	int transferred = epInfo->usb_endpoint.wMaxPacketSize;
 	int r = libusb_interrupt_transfer(epInfo->deviceHandle,
-									  epInfo->bEndpointAddress,
+									  epInfo->usb_endpoint.bEndpointAddress,
 									  epInfo->data,
-									  epInfo->wMaxPacketSize,
+									  epInfo->usb_endpoint.wMaxPacketSize,
 									  &transferred,
 									  0 );
 	if (r != 0) {
@@ -609,14 +340,14 @@ void ep_in_work_isochronous( EndpointInfo* epInfo ) {
 	char buffer[200];
 	libusb_fill_iso_transfer(xfr,
 							 epInfo->deviceHandle,
-							 epInfo->bEndpointAddress,
+							 epInfo->usb_endpoint.bEndpointAddress,
 							 buffer,//epInfo->data,
-							 epInfo->wMaxPacketSize,
+							 epInfo->usb_endpoint.wMaxPacketSize,
 							 num_iso_pack,
 							 cb_transfer_iso_in,
 							 epInfo,
 							 0);
-	libusb_set_iso_packet_lengths(xfr, epInfo->wMaxPacketSize/num_iso_pack);
+	libusb_set_iso_packet_lengths(xfr, epInfo->usb_endpoint.wMaxPacketSize/num_iso_pack);
 
 	libusb_submit_transfer(xfr);
 	yesImDone = false;
@@ -645,7 +376,7 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;
 	io.inner.flags = 0;
-	io.inner.length = epInfo->wMaxPacketSize;
+	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
 	
 	int rv = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
 	if (rv < 0) {
@@ -665,7 +396,7 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	xfr = libusb_alloc_transfer(num_iso_pack);
 	libusb_fill_iso_transfer(xfr,
 							 epInfo->deviceHandle,
-							 epInfo->bEndpointAddress,
+							 epInfo->usb_endpoint.bEndpointAddress,
 							 epInfo->data,
 							 rv,
 							 num_iso_pack,
@@ -685,9 +416,8 @@ void* ep_loop_thread( void* data ) {
 	EndpointInfo *ep = (EndpointInfo*)data;
 	while(ep->keepRunning) {
 		if (ep->ep_int >= 0) {
-			if (ep->bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) {	// data in
-//				ep_int_in_loop(ep->fd);
-				switch (ep->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+			if (ep->usb_endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) {	// data in
+				switch (ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 						ep_in_work_interrupt( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
@@ -700,7 +430,7 @@ void* ep_loop_thread( void* data ) {
 						break;
 				}
 			} else { // data out
-				switch (ep->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+				switch (ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 						ep_out_work_interrupt( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
@@ -714,7 +444,7 @@ void* ep_loop_thread( void* data ) {
 				}
 			}
 		} else {
-			printf("Idle: Endpoint 0x%02x\n", ep->bEndpointAddress);
+			printf("Idle: Endpoint 0x%02x\n", ep->usb_endpoint.bEndpointAddress);
 			usleep(1000000);
 		}
 	}
@@ -732,9 +462,7 @@ int main(int argc, char **argv) {
 	
 	int fd = usb_raw_open();
 	
-	
-	
-	
+	// libsub setup
 	libusb_device **devices;
 	libusb_device_handle *deviceHandle;
 	libusb_context *context = NULL;
@@ -899,9 +627,6 @@ int main(int argc, char **argv) {
 			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
 			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
 				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
-				mEndpointInfos[endpoint].bmAttributes = endpointDescriptor->bmAttributes;
-				mEndpointInfos[endpoint].wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
-				mEndpointInfos[endpoint].bEndpointAddress = endpointDescriptor->bEndpointAddress;
 				mEndpointInfos[endpoint].data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
 				
 				mEndpointInfos[endpoint].usb_endpoint.bLength =	endpointDescriptor->bLength;
@@ -933,33 +658,14 @@ int main(int argc, char **argv) {
 	mEndpointZeroInfo.fd = fd;
 	mEndpointZeroInfo.dev_handle = deviceHandle;
 	mEndpointZeroInfo.totalEndpoints = totalEndpoints;
-//	dev_handle = deviceHandle;
 	pthread_t threadEp0;
 	pthread_create(&threadEp0, NULL, ep0_loop_thread, &mEndpointZeroInfo);//fd);
 	
-	
-//	printf("Starting legacy ep threads");
-//	pthread_t threadEpOut;
-//	pthread_t threadEpIn;
-//	pthread_create(&threadEpIn, NULL, epin_loop_thread, &fd);
-//	pthread_create(&threadEpOut, NULL, epout_loop_thread, &fd);
-//
-//	pthread_t threadEpOut_audio;
-//	pthread_t threadEpIn_audio;
-//	pthread_create(&threadEpIn_audio, NULL, epin_loop_thread_audio, &fd);
-//	pthread_create(&threadEpOut_audio, NULL, epout_loop_thread_audio, &fd);
-
-	
-//	pthread_t threadEp[USB_RAW_EPS_NUM_MAX];
-//	for (int i = 0; i < USB_RAW_EPS_NUM_MAX; i++) {
-//		pthread_create(&threadEp[i], NULL, epin_loop_thread, &mEndpointInfo[i]);
-//	}
 	
 	struct timeval timeout;
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 1;
 	while(1) {
-//		sleep(1);
 		if(libusb_handle_events_timeout(context, &timeout) != LIBUSB_SUCCESS) {	// needed for iso transfers I believe
 			printf("libusb_handle_events() FAILED\n");
 		}
