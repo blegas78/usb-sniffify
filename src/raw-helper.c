@@ -333,7 +333,7 @@ void log_event(struct usb_raw_event *event) {
 
 /*----------------------------------------------------------------------*/
 // from another resource
-inline void put_unaligned_le16(__u16 val, __u16 *cp)
+static inline void put_unaligned_le16(__u16 val, __u16 *cp)
 {
 //	__u8	*p = (void *)cp;
 	__u8	*p = (__u8 *)cp;

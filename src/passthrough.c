@@ -26,14 +26,12 @@
 //#include "dualsense.h"
 //#include "magicPro.h"
 
-#include <iostream>
 
 #include <libusb.h>
 
 
 #include "raw-helper.h"
 
-using namespace std;
 
 /*----------------------------------------------------------------------*/
 
@@ -103,10 +101,10 @@ bool assign_ep_address(struct usb_raw_ep_info *info,
 
 
 typedef struct {
-	int fd = -1;	// raw_gadget descriptor
-	int ep_int = -1;// endpoint handler
+	int fd;	// raw_gadget descriptor
+	int ep_int;// endpoint handler
 	libusb_device_handle *deviceHandle;
-	bool keepRunning = true;	// thread management
+	bool keepRunning;	// thread management
 	
 	struct usb_endpoint_descriptor usb_endpoint;
 	uint8_t bmAttributes;
@@ -185,7 +183,7 @@ bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 	//	}
 	io->inner.length = event->ctrl.wLength;
 	if (event->ctrl.bRequestType & 0x80) {
-		std::cout << "copying " << (int)event->ctrl.wLength << " bytes" << std::endl;
+		printf("copying %d bytes\n", event->ctrl.wLength);
 		//		memcpy(dummyBuffer, &event->inner.data[0], event->ctrl.wLength);
 		
 		r = libusb_control_transfer(	info->dev_handle,
@@ -199,7 +197,6 @@ bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 									event->ctrl.wLength,
 									0);
 		if (r < 0) {
-			std::cerr << "r<0 :(" << std::endl;
 			printf("libusb_control_transfer error: %s\n", libusb_error_name(r));
 			return false;
 		}
@@ -281,8 +278,6 @@ bool ep0_loop(EndpointZeroInfo* info) {
 		rv = usb_raw_ep0_read(info->fd, (struct usb_raw_ep_io *)&io);
 		printf("ep0: transferred %d bytes (out) - ", rv);
 		
-
-//			std::cout << "copying " << (int)event->ctrl.wLength << " bytes" << std::endl;
 
 		int r = libusb_control_transfer(	info->dev_handle,
 									event.ctrl.bRequestType,
@@ -700,7 +695,7 @@ void* ep_loop_thread( void* data ) {
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
 					case LIBUSB_TRANSFER_TYPE_BULK:
 					default:
-						std::cout << "Unsupported ep->bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK" << std::endl;
+						printf("Unsupported ep->bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK\n");
 						usleep(1000);
 						break;
 				}
@@ -713,7 +708,7 @@ void* ep_loop_thread( void* data ) {
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
 					case LIBUSB_TRANSFER_TYPE_BULK:
 					default:
-						std::cout << "Unsupported ep->bEndpointAddress" << std::endl;
+						printf("Unsupported ep->bEndpointAddress\n");
 						usleep(1000);
 						break;
 				}
@@ -746,7 +741,7 @@ int main(int argc, char **argv) {
 	
 	int r = libusb_init(&context);
 	if(r < 0) {
-		std::cout << "libusb_init() Error " << r << std::endl;
+		printf("libusb_init() Error %d\n", r);
 		return 1;
 	}
 	//libusb_set_debug(context, 0);
@@ -754,33 +749,33 @@ int main(int argc, char **argv) {
 
 	ssize_t deviceCount = libusb_get_device_list(context, &devices);
 	if(deviceCount < 0) {
-		std::cout << "libusb_get_device_list() Error" << std::endl;
+		printf("libusb_get_device_list() Error\n");
 		return 1;
 	}
-	std::cout << deviceCount << " Devices." << std::endl;
+	printf("%d Devioces.\n", deviceCount);
 	
 	int devIndex = -1;
 	for (int i = 0; i < deviceCount; i++) {
-		std::cout << "Device : " << i;
-		std::cout << " | Bus " << (int)libusb_get_bus_number(devices[i]);
-		std::cout << " Port " << (int)libusb_get_port_number(devices[i]) << std::endl;
-//		std::cout << " - Addr " << (int)libusb_get_device_address(devices[i]) << std::endl;
+		printf("Device : %d", i);
+		printf(" | Bus %d", libusb_get_bus_number(devices[i]));
+		printf(" Port %d", libusb_get_port_number(devices[i]));
+//		printf(" - Addr %d\n", libusb_get_device_address(devices[i]));
 		
 		if (libusb_get_bus_number(devices[i]) == 1 &&	// specific for lower USB2 port on rPi 4 with raspbian
 			libusb_get_port_number(devices[i]) == 4) {
 			devIndex = i;
-			std::cout << " |-- This is the device of interest!" << std::endl;
+			printf(" |-- This is the device of interest!\n");
 		}
 	}
 	if (devIndex < 0) {
-		std::cerr << "ERROR!  No USB on the lower rPi USB 2.0 port?" << std::endl;
+		printf("ERROR!  No USB on the lower rPi USB 2.0 port?\n");
 		exit(EXIT_FAILURE);
 	}
 	if( libusb_open(devices[devIndex], &deviceHandle)  != LIBUSB_SUCCESS ) {
-		std::cerr << "FAILED! libusb_open()" << std::endl;
+		printf("FAILED! libusb_open()\n");
 		exit(EXIT_FAILURE);
 	}
-	std::cout << "Device has been opened!" << std::endl;
+	printf("Device has been opened!\n");
 //	deviceHandle = libusb_open_device_with_vid_pid(context, VENDOR, PRODUCT); //these are vendorID and productID I found for my usb device
 //	if(deviceHandle == NULL)
 //		cout<<"Cannot open device"<<endl;
@@ -791,57 +786,57 @@ int main(int argc, char **argv) {
 	
 	
 	if(libusb_kernel_driver_active(deviceHandle, 0) == 1) { //find out if kernel driver is attached
-		std::cout << "Kernel Driver Active" << std::endl;
+		printf("Kernel Driver Active\n");
 		if(libusb_detach_kernel_driver(deviceHandle, 0) == 0) //detach it
-			std::cout << "Kernel Driver Detached!" << std::endl;
+			printf("Kernel Driver Detached!\n");
 	}
 	if (libusb_set_auto_detach_kernel_driver(deviceHandle, true) != LIBUSB_SUCCESS) {
-		std::cerr << "FAILED to perform libusb_set_auto_detach_kernel_driver()" << std::endl;
+		printf("FAILED to perform libusb_set_auto_detach_kernel_driver()\n");
 		exit(EXIT_FAILURE);
 	}
 	
-	libusb_device_descriptor deviceDescriptor;
+	struct libusb_device_descriptor deviceDescriptor;
 	if( libusb_get_device_descriptor(libusb_get_device(deviceHandle), &deviceDescriptor) != LIBUSB_SUCCESS ) {
-		std::cerr << "FAILED to call libusb_get_device_descriptor()" << std::endl;
+		printf("FAILED to call libusb_get_device_descriptor()\n");
 		exit(EXIT_FAILURE);
 	}
-	std::cout << "Have Device Descriptor!" << std::endl;
-	std::cout << " - bLength            : " << (int)deviceDescriptor.bLength << std::endl;
-	std::cout << " - bDescriptorType    : " << (int)deviceDescriptor.bDescriptorType << std::endl;
+	printf("Have Device Descriptor!\n");
+	printf(" - bLength            : %d\n",deviceDescriptor.bLength);
+	printf(" - bDescriptorType    : %d\n", deviceDescriptor.bDescriptorType);
 	printf(      " - bcdUSB             : 0x%04x\n", deviceDescriptor.bcdUSB);
-	std::cout << " - bDeviceClass       : " << (int)deviceDescriptor.bDeviceClass << std::endl;
-	std::cout << " - bDeviceSubClass    : " << (int)deviceDescriptor.bDeviceSubClass << std::endl;
-	std::cout << " - bDeviceProtocol    : " << (int)deviceDescriptor.bDeviceProtocol << std::endl;
-	std::cout << " - bMaxPacketSize0    : " << (int)deviceDescriptor.bMaxPacketSize0 << std::endl;
+	printf(" - bDeviceClass       : %d\n", deviceDescriptor.bDeviceClass);
+	printf(" - bDeviceSubClass    : %d\n", deviceDescriptor.bDeviceSubClass);
+	printf(" - bDeviceProtocol    : %d\n", deviceDescriptor.bDeviceProtocol);
+	printf(" - bMaxPacketSize0    : %d\n", deviceDescriptor.bMaxPacketSize0);
 	printf(      " - idVendor           : 0x%04x\n", deviceDescriptor.idVendor);
 	printf(      " - idProduct          : 0x%04x\n", deviceDescriptor.idProduct);
-	std::cout << " - bcdDevice          : " << (int)deviceDescriptor.bcdDevice << std::endl;
-	std::cout << " - iManufacturer      : " << (int)deviceDescriptor.iManufacturer << std::endl;
-	std::cout << " - iProduct           : " << (int)deviceDescriptor.iProduct << std::endl;
-	std::cout << " - iSerialNumber      : " << (int)deviceDescriptor.iSerialNumber << std::endl;
-	std::cout << " - bNumConfigurations : " << (int)deviceDescriptor.bNumConfigurations << std::endl;
+	printf(" - bcdDevice          : %d\n", deviceDescriptor.bcdDevice);
+	printf(" - iManufacturer      : %d\n", deviceDescriptor.iManufacturer);
+	printf(" - iProduct           : %d\n", deviceDescriptor.iProduct);
+	printf(" - iSerialNumber      : %d\n", deviceDescriptor.iSerialNumber);
+	printf(" - bNumConfigurations : %d\n", deviceDescriptor.bNumConfigurations);
 	
 	if (deviceDescriptor.bNumConfigurations != 1) {
-		std::cerr << "ERROR!  No support for multiple configurations, deviceDescriptor.bNumConfigurations = " << (int)deviceDescriptor.bNumConfigurations << std::endl;
+		printf("ERROR!  No support for multiple configurations, deviceDescriptor.bNumConfigurations = %d\n", deviceDescriptor.bNumConfigurations);
 	}
 	
 	int configIndex = 0;
-	libusb_config_descriptor* configDescriptor;
+	struct libusb_config_descriptor* configDescriptor;
 	
 	if(libusb_get_config_descriptor(libusb_get_device(deviceHandle), configIndex, &configDescriptor) != LIBUSB_SUCCESS) {
-		std::cerr << "FAILED! libusb_get_config_descriptor()" << std::endl;
+		printf("FAILED! libusb_get_config_descriptor()");
 		exit(EXIT_FAILURE);
 	}
-	std::cout << "Have Config Descriptor!" << std::endl;
-	std::cout << " - bLength            : " << (int)configDescriptor->bLength << std::endl;
-	std::cout << " - bDescriptorType    : " << (int)configDescriptor->bDescriptorType << std::endl;
-	std::cout << " - wTotalLength       : " << (int)configDescriptor->wTotalLength << std::endl;
-	std::cout << " - bNumInterfaces     : " << (int)configDescriptor->bNumInterfaces << std::endl;
-	std::cout << " - bConfigurationValue: " << (int)configDescriptor->bConfigurationValue << std::endl;
-	std::cout << " - iConfiguration     : " << (int)configDescriptor->iConfiguration << std::endl;
-	std::cout << " - bmAttributes       : " << (int)configDescriptor->bmAttributes << std::endl;
-	std::cout << " - MaxPower           : " << (int)configDescriptor->MaxPower << std::endl;
-	std::cout << " - extra_length       : " << (int)configDescriptor->extra_length << std::endl;
+	printf("Have Config Descriptor!");
+	printf(" - bLength            : %d\n", configDescriptor->bLength);
+	printf(" - bDescriptorType    : %d\n", configDescriptor->bDescriptorType);
+	printf(" - wTotalLength       : %d\n", configDescriptor->wTotalLength);
+	printf(" - bNumInterfaces     : %d\n", configDescriptor->bNumInterfaces);
+	printf(" - bConfigurationValue: %d\n", configDescriptor->bConfigurationValue);
+	printf(" - iConfiguration     : %d\n", configDescriptor->iConfiguration);
+	printf(" - bmAttributes       : %d\n", configDescriptor->bmAttributes);
+	printf(" - MaxPower           : %d\n", configDescriptor->MaxPower);
+	printf(" - extra_length       : %d\n", configDescriptor->extra_length);
 	
 	
 	int numInterfaces = configDescriptor->bNumInterfaces;
@@ -850,23 +845,23 @@ int main(int argc, char **argv) {
 		int numAlternates = configDescriptor->interface[i].num_altsetting;
 		
 		for (int a = 0; a < numAlternates; a++) {
-			const libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
-			std::cout << " | - Interface " << (int)interfaceDescriptor->bInterfaceNumber << " Alternate " << a << std::endl;
+			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
+			printf(" | - Interface %d Alternate %d\n", interfaceDescriptor->bInterfaceNumber, a);
 			
 			r = libusb_claim_interface(deviceHandle, interfaceDescriptor->bInterfaceNumber); //claim interface 0 (the first) of device (mine had jsut 1)
 			if(r < 0) {
-				cout << "Cannot Claim Interface" << endl;
+				printf("Cannot Claim Interface\n");
 				return 1;
 			}
-			//		cout << "Claimed Interface " << (int)configDescriptor->interfaces[i].altsetting->bInterfaceNumber <<endl;
+			//		printf("Claimed Interface %d\n", configDescriptor->interfaces[i].altsetting->bInterfaceNumber);
 			
 			totalEndpoints += interfaceDescriptor->bNumEndpoints;
-			std::cout << "   - bNumEndpoints      : " << (int)interfaceDescriptor->bNumEndpoints << std::endl;
-			std::cout << "   - Endpoints          : " <<std::endl;
+			printf("   - bNumEndpoints      : %d\n", interfaceDescriptor->bNumEndpoints);
+			printf("   - Endpoints          : \n");
 			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
 				libusb_set_interface_alt_setting(deviceHandle, i, a );	// no idea how to use this properly, but putting htis here wrok son a PS5 controller
 				
-				const libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
+				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
 				printf("   | - bEndpointAddress   : 0x%02x\n", endpointDescriptor->bEndpointAddress);
 				printf("     - wMaxPacketSize     : %d\n", endpointDescriptor->wMaxPacketSize);
 				printf("     - bmAttributes       : %d\n", endpointDescriptor->bmAttributes);
@@ -887,13 +882,13 @@ int main(int argc, char **argv) {
 	
 	
 	// raw-gadget fun
-	std::cout << "Starting raw-gadget" << std::endl;
+	printf("Starting raw-gadget");
 	usb_raw_init(fd, USB_SPEED_HIGH, driver, device);
 	usb_raw_run(fd);
 
 	
 	// Build endpoint handling
-	std::cout << "Starting endpoint threads" << std::endl;
+	printf("Starting endpoint threads");
 	EndpointInfo *mEndpointInfos = (EndpointInfo *)malloc(totalEndpoints * sizeof(EndpointInfo));
 	pthread_t *endpointThreads = (pthread_t *)malloc(totalEndpoints * sizeof(pthread_t));
 	
@@ -901,9 +896,9 @@ int main(int argc, char **argv) {
 	for (int i = 0; i < numInterfaces; i++) {
 		int numAlternates = configDescriptor->interface[i].num_altsetting;
 		for (int a = 0; a < numAlternates; a++) {
-			const libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
+			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
 			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
-				const libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
+				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
 				mEndpointInfos[endpoint].bmAttributes = endpointDescriptor->bmAttributes;
 				mEndpointInfos[endpoint].wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
 				mEndpointInfos[endpoint].bEndpointAddress = endpointDescriptor->bEndpointAddress;
@@ -932,7 +927,7 @@ int main(int argc, char **argv) {
 	
 	
 	// Start ep0 thread afer endpoints, I believe
-	std::cout << "Starting ep0 thread" << std::endl;
+	printf("Starting ep0 thread");
 	EndpointZeroInfo mEndpointZeroInfo;
 	mEndpointZeroInfo.mEndpointInfos = mEndpointInfos;
 	mEndpointZeroInfo.fd = fd;
@@ -943,7 +938,7 @@ int main(int argc, char **argv) {
 	pthread_create(&threadEp0, NULL, ep0_loop_thread, &mEndpointZeroInfo);//fd);
 	
 	
-//	std::cout << "Starting legacy ep threads" << std::endl;
+//	printf("Starting legacy ep threads");
 //	pthread_t threadEpOut;
 //	pthread_t threadEpIn;
 //	pthread_create(&threadEpIn, NULL, epin_loop_thread, &fd);
