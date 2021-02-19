@@ -23,7 +23,7 @@
 #define STRING_ID_INTERFACE	0
 
 #define EP_MAX_PACKET_CONTROL	64
-#define EP_MAX_PACKET_INT	64
+//#define EP_MAX_PACKET_INT	64
 
 // struct usb_device_descriptor usb_device = {
 #define B_DEVICE_CLASS 0

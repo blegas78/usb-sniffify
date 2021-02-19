@@ -2,9 +2,12 @@
 #define RAW_HELPER_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 //#include <linux/hid.h>
 #include <linux/usb/ch9.h>
+
+#include <libusb.h>
 
 /*----------------------------------------------------------------------*/
 
@@ -174,6 +177,60 @@ struct usb_raw_int_io {
 };
 
 /*----------------------------------------------------------------------*/
+typedef struct {
+	int fd;	// raw_gadget descriptor
+	int ep_int;// endpoint handler
+	libusb_device_handle *deviceHandle;
+	bool keepRunning;	// thread management, mostly unused
+	bool stop;	// for endpoint termination from interface switching
+	int busyPackets; // to notice then EP is safe to be diasbled
+	
+	struct usb_endpoint_descriptor usb_endpoint;
+	
+	unsigned char* data;
+} EndpointInfo;
+
+typedef struct {
+//	bool active;
+	uint8_t bInterfaceNumber;
+	int bNumEndpoints;
+	EndpointInfo *mEndpointInfos;
+	
+} AlternateInfo;
+
+typedef struct {
+//	bool active;
+	int activeAlternate;
+	int bNumAlternates;
+	AlternateInfo *mAlternateInfos;
+	
+} InterfaceInfo;
+
+typedef struct {
+//	bool active;
+	int activeInterface;
+	int bNumInterfaces;
+	InterfaceInfo *mInterfaceInfos;
+	
+} ConfigurationInfo;
+
+typedef struct {
+//	int totalEndpoints;
+//	EndpointInfo *mEndpointInfos;
+//	InterfaceInfo *mInterfaceInfos;
+	int bNumConfigurations;
+	int activeConfiguration;
+	ConfigurationInfo* mConfigurationInfos;
+	int fd;
+	libusb_device_handle *dev_handle;
+	//struct libusb_config_descriptor* configDescriptor;
+} EndpointZeroInfo;
+
+/*----------------------------------------------------------------------*/
+bool assign_ep_address(struct usb_raw_ep_info *info, struct usb_endpoint_descriptor *ep);
+void process_eps_info(EndpointZeroInfo* epZeroInfo);
+
+/*----------------------------------------------------------------------*/
 
 int usb_raw_open();
 
@@ -186,6 +243,7 @@ int usb_raw_ep0_read(int fd, struct usb_raw_ep_io *io);
 int usb_raw_ep0_write(int fd, struct usb_raw_ep_io *io);
 
 int usb_raw_ep_enable(int fd, struct usb_endpoint_descriptor *desc);
+int usb_raw_ep_disable(int fd, uint32_t something);
 int usb_raw_ep_read(int fd, struct usb_raw_ep_io *io);
 
 int usb_raw_ep_write(int fd, struct usb_raw_ep_io *io);

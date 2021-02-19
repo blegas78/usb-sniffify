@@ -23,91 +23,88 @@
 
 /*----------------------------------------------------------------------*/
 
-bool assign_ep_address(struct usb_raw_ep_info *info,
-					   struct usb_endpoint_descriptor *ep) {
-	if (usb_endpoint_num(ep) != 0)
-		return false;  // Already assigned.
-	if (usb_endpoint_dir_in(ep) && !info->caps.dir_in)
-		return false;
-	if (usb_endpoint_dir_out(ep) && !info->caps.dir_out)
-		return false;
-	switch (usb_endpoint_type(ep)) {
-		case USB_ENDPOINT_XFER_BULK:
-			if (!info->caps.type_bulk)
-				return false;
-			break;
-		case USB_ENDPOINT_XFER_INT:
-			if (!info->caps.type_int)
-				return false;
-			break;
-		default:
-			assert(false);
-	}
-	if (info->addr == USB_RAW_EP_ADDR_ANY) {
-		static int addr = 1;
-		ep->bEndpointAddress |= addr++;
-	} else
-		ep->bEndpointAddress |= info->addr;
-	return true;
-}
-
-
-
-typedef struct {
-	int fd;	// raw_gadget descriptor
-	int ep_int;// endpoint handler
-	libusb_device_handle *deviceHandle;
-	bool keepRunning;	// thread management
-	
-	struct usb_endpoint_descriptor usb_endpoint;
-	
-	unsigned char* data;
-} EndpointInfo;
-
-typedef struct {
-	int totalEndpoints;
-	EndpointInfo *mEndpointInfos;
-	int fd;
-	libusb_device_handle *dev_handle;
-} EndpointZeroInfo;
-
-
-
-
-
-void process_eps_info(EndpointZeroInfo* epZeroInfo) {
-	struct usb_raw_eps_info info;
-	memset(&info, 0, sizeof(info));
-	
-	int num = usb_raw_eps_info(epZeroInfo->fd, &info);
-	for (int i = 0; i < num; i++) {
-		printf("ep #%d:\n", i);
-		printf("  name: %s\n", &info.eps[i].name[0]);
-		printf("  addr: %u\n", info.eps[i].addr);
-		printf("  type: %s %s %s\n",
-			   info.eps[i].caps.type_iso ? "iso" : "___",
-			   info.eps[i].caps.type_bulk ? "blk" : "___",
-			   info.eps[i].caps.type_int ? "int" : "___");
-		printf("  dir : %s %s\n",
-			   info.eps[i].caps.dir_in ? "in " : "___",
-			   info.eps[i].caps.dir_out ? "out" : "___");
-		printf("  maxpacket_limit: %u\n",
-			   info.eps[i].limits.maxpacket_limit);
-		printf("  max_streams: %u\n", info.eps[i].limits.max_streams);
-	}
-	
-	for (int e = 0; e < epZeroInfo->totalEndpoints; e++) {
-		for (int i = 0; i < num; i++) {
-			if (assign_ep_address(&info.eps[i], &epZeroInfo->mEndpointInfos[e].usb_endpoint))
-				continue;
+void setEndpoint(AlternateInfo* info, int endpoint, bool enable) {
+	EndpointInfo* endpointInfo = &info->mEndpointInfos[endpoint];
+	if (enable) {
+		printf(" - - - Attempting to enable EP\n");
+		endpointInfo->ep_int = usb_raw_ep_enable(endpointInfo->fd, &endpointInfo->usb_endpoint);
+		endpointInfo->stop = false;
+	} else {	// may neet mutex here
+		int temp = endpointInfo->ep_int;
+		endpointInfo->stop = true;
+		while(endpointInfo->busyPackets > 0) {
+			usleep(100);
 		}
-
-		int int_in_addr = usb_endpoint_num(&epZeroInfo->mEndpointInfos[e].usb_endpoint);
-		assert(int_in_addr != 0);
-		printf("int_in: addr = %u\n", int_in_addr);
+		printf(" - - - Attempting to disable EP with: %d\n", temp);
+		int ret = usb_raw_ep_disable(endpointInfo->fd, temp);
+		printf(" - - - No idea abbout this ep diable return: %d\n", ret);
+		
 	}
+	printf(" ---- 0x%02x ep_int = %d\n", endpointInfo->usb_endpoint.bEndpointAddress, endpointInfo->ep_int);
 }
 
+void setAlternate(InterfaceInfo* info, int alternate) {
+	AlternateInfo* alternateInfo = &info->mAlternateInfos[alternate];
+	if (alternate >= 0) {
+		alternateInfo = &info->mAlternateInfos[alternate];
+	} else {
+		alternateInfo = &info->mAlternateInfos[info->activeAlternate];
+	}
+	
+	
+	if (info->activeAlternate != alternate &&
+		info->activeAlternate >= 0 &&
+		alternate >= 0) {
+		printf(" - - Need to disable current Alternate %d!\n", info->activeAlternate);	// TODO;
+		for (int i = 0; i < info->mAlternateInfos[info->activeAlternate].bNumEndpoints; i++) {
+			printf(" - - | setEndpoint(?, %d, %d)\n", i, false);
+			setEndpoint(&info->mAlternateInfos[info->activeAlternate], i, false);
+		}
+	}
+	for (int i = 0; i < alternateInfo->bNumEndpoints; i++) {
+		printf(" - - setEndpoint(?, %d, %d)\n", i, alternate >= 0 ? true : false);
+		setEndpoint(alternateInfo, i, alternate >= 0 ? true : false);
+	}
+	
+	//libusb_set_interface_alt_setting(deviceHandle, i, a );
+	
+	info->activeAlternate = alternate;
+}
+
+void setInterface(ConfigurationInfo* info, int interface, int alternate) {
+	InterfaceInfo* interfaceInfo = &info->mInterfaceInfos[interface];
+	
+	if (info->activeInterface != interface &&
+		info->activeInterface >= 0 &&
+		alternate > 0) {
+		printf(" - Need to disable current Interface of %d,%d!\n", info->activeInterface, info->mInterfaceInfos[info->activeInterface].activeAlternate);
+		setAlternate(&info->mInterfaceInfos[info->activeInterface], -1);
+	}
+	
+	printf(" - setAlternate(?, %d)\n", alternate);
+	setAlternate(interfaceInfo, alternate);
+	info->activeInterface = interface;
+}
+
+void setConfiguration(EndpointZeroInfo* info, int configuration) {
+	ConfigurationInfo* configInfo = &info->mConfigurationInfos[configuration];
+
+	
+	if (info->activeConfiguration != configuration &&
+		info->activeConfiguration >= 0 &&
+		configuration >= 0) {
+		printf("Need to disable current configuration!");
+		for (int i = 0; i < info->mConfigurationInfos[info->activeConfiguration].bNumInterfaces; i++) {
+			setInterface(&info->mConfigurationInfos[info->activeConfiguration], i, -1);	// unsure if this is needed in set config
+		}
+	}
+	
+	for (int i = 0; i < configInfo->bNumInterfaces; i++) {
+		printf("setInterface(?, %d, %d)\n", i, 0);
+		setInterface(configInfo, i, 0);	// unsure if this is needed in set config
+	}
+	info->activeConfiguration = configuration;
+}
 
 
 char dummyBuffer[4096];
@@ -126,7 +123,7 @@ bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 									event->ctrl.wValue,
 									event->ctrl.wIndex,
 									//								event->inner.data,
-//									dummyBuffer,
+									//									dummyBuffer,
 									(unsigned char*)&io->data[0],
 									event->ctrl.wLength,
 									0);
@@ -136,22 +133,34 @@ bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 		}
 		
 		//	memcpy(&io->inner.data[0], dummyBuffer, r);
-//		memcpy(&io->data[0], dummyBuffer, r);
+		//		memcpy(&io->data[0], dummyBuffer, r);
 		//	memcpy(&io->inner.data[0], event->inner.data, r);
 		io->inner.length = r;
 	}
 	
-	if( (event->ctrl.bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD &&
-	   event->ctrl.bRequest == USB_REQ_SET_CONFIGURATION) {
-		
-		for (int i = 0; i < info->totalEndpoints; i++) {
-			info->mEndpointInfos[i].ep_int = usb_raw_ep_enable(info->fd, &info->mEndpointInfos[i].usb_endpoint);
-			printf(" ---- 0x%02x ep_int = %d\n", info->mEndpointInfos[i].usb_endpoint.bEndpointAddress, info->mEndpointInfos[i].ep_int);
+	if( (event->ctrl.bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD) {
+		switch(event->ctrl.bRequest) {
+			case USB_REQ_SET_CONFIGURATION:
+				printf(" - Setting Configuration to: %d\n",  event->ctrl.wValue & 0xff);	// "The lower byte of the wValue field specifies the desired configuration"
+				
+//				for (int i = 0; i < info->totalEndpoints; i++) {
+//					info->mEndpointInfos[i].ep_int = usb_raw_ep_enable(info->fd, &info->mEndpointInfos[i].usb_endpoint);
+//					printf(" ---- 0x%02x ep_int = %d\n", info->mEndpointInfos[i].usb_endpoint.bEndpointAddress, info->mEndpointInfos[i].ep_int);
+//				}
+				
+				setConfiguration(info, (event->ctrl.wValue & 0xff) -1);
+				
+				usb_raw_vbus_draw(info->fd, 0x32*5); // TODO: grab from descriptor for passthrough
+				usb_raw_configure(info->fd);
+				//			io->inner.length = 0;
+				break;
+			case USB_REQ_SET_INTERFACE:
+				printf(" - Setting Interface to: %d Alternate: %d\n", event->ctrl.wIndex,  event->ctrl.wValue);
+				setInterface(&info->mConfigurationInfos[info->activeConfiguration], event->ctrl.wIndex,  event->ctrl.wValue);
+				break;
+			default:
+				break;
 		}
-		
-			usb_raw_vbus_draw(info->fd, 0x32*5);
-			usb_raw_configure(info->fd);
-//			io->inner.length = 0;
 	}
 	return true;
 }
@@ -198,18 +207,18 @@ bool ep0_loop(EndpointZeroInfo* info) {
 		rv = usb_raw_ep0_read(info->fd, (struct usb_raw_ep_io *)&io);
 		printf("ep0: transferred %d bytes (out) - ", rv);
 		
-
+		
 		int r = libusb_control_transfer(	info->dev_handle,
-									event.ctrl.bRequestType,
-									event.ctrl.bRequest,
-									event.ctrl.wValue,
-									event.ctrl.wIndex,
-	//								event->inner.data,
-									(unsigned char*)&io.data[0],
-//									dummyBuffer,
-									io.inner.length,
-//									event->ctrl.wLength,
-									5);
+										event.ctrl.bRequestType,
+										event.ctrl.bRequest,
+										event.ctrl.wValue,
+										event.ctrl.wIndex,
+										//								event->inner.data,
+										(unsigned char*)&io.data[0],
+										//									dummyBuffer,
+										io.inner.length,
+										//									event->ctrl.wLength,
+										5);
 		
 		if (r < 0) {
 			printf(" ERROR  libusb_control_transfer() returned < 0 in ep0_loop(). r = %d\n", r);
@@ -225,7 +234,7 @@ bool ep0_loop(EndpointZeroInfo* info) {
 }
 
 void* ep0_loop_thread( void* data ) {
-//	int fd = *(int*)data;
+	//	int fd = *(int*)data;
 	EndpointZeroInfo* info = (EndpointZeroInfo *)data;
 	while(1)
 		ep0_loop(info);//fd);
@@ -258,11 +267,11 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 									  &transferred,
 									  0 );
 	if (r != 0) {
-	//	printf("libusb_interrupt_transfer FAIL\n");
+		//	printf("libusb_interrupt_transfer FAIL\n");
 		return;
 	}
 }
-	
+
 void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;//ep_int_in;// | 0X04;
@@ -277,10 +286,10 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 									  &transferred,
 									  0 );
 	if (r != 0) {
-	//	printf("libusb_interrupt_transfer FAIL\n");
+		//	printf("libusb_interrupt_transfer FAIL\n");
 		return;
 	}
-//	printf("Read %d from controller\n", transferred);
+	//	printf("Read %d from controller\n", transferred);
 	memcpy(&io.inner.data[0], epInfo->data, transferred);
 	//io.inner.length = transferred;
 	
@@ -290,12 +299,13 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 	}
 }
 
-int yesImDone = true;
+//int yesImDone = true;
 static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
 	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
 		fprintf(stderr, "transfer status %d\n", xfr->status);
 		return;
 	}
+	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
 	if (xfr->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
 		for (int i = 0; i < xfr->num_iso_packets; i++) {
 			struct libusb_iso_packet_descriptor *pack = &xfr->iso_packet_desc[i];
@@ -305,59 +315,65 @@ static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
 				return;
 			}
 			
-//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
+			//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
 			
 			
 			
-			EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
+			
 			struct usb_raw_int_io io;
 			io.inner.ep = epInfo->ep_int;
 			io.inner.flags = 0;
 			io.inner.length = pack->actual_length;//0;//epInfo->wMaxPacketSize;
-
+			
 			// TODO: everything, really
-
-//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
+			//printf("Sending to ep 0x%02x %d\n", io.inner.ep, io.inner.length);
+			//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
 			memcpy(&io.inner.data[0], xfr->buffer, pack->actual_length);
-
-//			int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
-//			if (rv < 0) {
-//				// ? error
-//			}
+			
+			int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
+			//			if (rv < 0) {
+			//				// ? error
+			//			}
 		}
 	}
-	yesImDone = true;
+	epInfo->busyPackets--;
+	//yesImDone = true;
 }
 
 void ep_in_work_isochronous( EndpointInfo* epInfo ) {
-	if (!yesImDone) {
+	if (epInfo->busyPackets >= 10) {
 		usleep(1);
 		return;
 	}
+	epInfo->busyPackets++;
 	static struct libusb_transfer *xfr;
 	int num_iso_pack = 1;
 	xfr = libusb_alloc_transfer(num_iso_pack);
-	char buffer[200];
+	//char buffer[200];
 	libusb_fill_iso_transfer(xfr,
 							 epInfo->deviceHandle,
 							 epInfo->usb_endpoint.bEndpointAddress,
-							 buffer,//epInfo->data,
+							 //buffer,//
+							 epInfo->data,
 							 epInfo->usb_endpoint.wMaxPacketSize,
 							 num_iso_pack,
 							 cb_transfer_iso_in,
 							 epInfo,
 							 0);
 	libusb_set_iso_packet_lengths(xfr, epInfo->usb_endpoint.wMaxPacketSize/num_iso_pack);
-
-	libusb_submit_transfer(xfr);
-	yesImDone = false;
 	
-	usleep(10000);
+	libusb_submit_transfer(xfr);
+	//yesImDone = false;
+	
+	//usleep(10000);
 }
+
 static void cb_xfr(struct libusb_transfer *xfr) {
 	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
 		fprintf(stderr, "transfer status %d\n", xfr->status);
+		return;
 	}
+	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
 	if (xfr->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
 		for (int i = 0; i < xfr->num_iso_packets; i++) {
 			struct libusb_iso_packet_descriptor *pack = &xfr->iso_packet_desc[i];
@@ -367,12 +383,18 @@ static void cb_xfr(struct libusb_transfer *xfr) {
 				//exit(5);
 			}
 			
-//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
+			//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
 		}
 	}
-//	printf("xfr Success!\n");
+	//	printf("xfr Success!\n");
+	epInfo->busyPackets--;
 }
 void ep_out_work_isochronous( EndpointInfo* epInfo ) {
+	if (epInfo->busyPackets >= 10) {
+		usleep(10);
+		return;
+	}
+	epInfo->busyPackets++;
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;
 	io.inner.flags = 0;
@@ -383,11 +405,11 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 		printf("No data vailable I guess?\n");
 		return;
 	}
-//	printf("ep_out_work_isochronous(): %d - ", rv);
-//	for (int i = 0; i < rv; i++) {
-//		printf("%02x ", io.inner.data[i]);
-//	}
-//	printf("\n");
+	//	printf("ep_out_work_isochronous(): %d - ", rv);
+	//	for (int i = 0; i < rv; i++) {
+	//		printf("%02x ", io.inner.data[i]);
+	//	}
+	//	printf("\n");
 	int transferred = rv;
 	memcpy(epInfo->data, &io.inner.data[0], transferred);
 	
@@ -401,7 +423,7 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 							 rv,
 							 num_iso_pack,
 							 cb_xfr,
-							 NULL,
+							 epInfo,
 							 0);
 	libusb_set_iso_packet_lengths(xfr, rv/num_iso_pack);
 	
@@ -415,12 +437,13 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 void* ep_loop_thread( void* data ) {
 	EndpointInfo *ep = (EndpointInfo*)data;
 	while(ep->keepRunning) {
-		if (ep->ep_int >= 0) {
+		if (ep->ep_int >= 0 && !ep->stop) {
 			if (ep->usb_endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) {	// data in
 				switch (ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 						ep_in_work_interrupt( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
+						usleep(ep->usb_endpoint.bInterval * 125);	// not sure if binterval should be trusted, nor if it's 125 or 1000.  should also be 2^(interval-1)
 						ep_in_work_isochronous( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
 					case LIBUSB_TRANSFER_TYPE_BULK:
@@ -434,6 +457,7 @@ void* ep_loop_thread( void* data ) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 						ep_out_work_interrupt( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
+						usleep(ep->usb_endpoint.bInterval * 125);
 						ep_out_work_isochronous( ep ); break;
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
 					case LIBUSB_TRANSFER_TYPE_BULK:
@@ -462,6 +486,11 @@ int main(int argc, char **argv) {
 	
 	int fd = usb_raw_open();
 	
+	// this will hold all usb management stuff, build from libusb and provided to raw_gadget when needed.
+	EndpointZeroInfo mEndpointZeroInfo;
+	pthread_t endpointThreads[60]; // crawl before I walk
+	int endpoint = 0;
+	
 	// libsub setup
 	libusb_device **devices;
 	libusb_device_handle *deviceHandle;
@@ -474,7 +503,7 @@ int main(int argc, char **argv) {
 	}
 	//libusb_set_debug(context, 0);
 	libusb_set_option(context, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_INFO);
-
+	
 	ssize_t deviceCount = libusb_get_device_list(context, &devices);
 	if(deviceCount < 0) {
 		printf("libusb_get_device_list() Error\n");
@@ -486,8 +515,8 @@ int main(int argc, char **argv) {
 	for (int i = 0; i < deviceCount; i++) {
 		printf("Device : %d", i);
 		printf(" | Bus %d", libusb_get_bus_number(devices[i]));
-		printf(" Port %d", libusb_get_port_number(devices[i]));
-//		printf(" - Addr %d\n", libusb_get_device_address(devices[i]));
+		printf(" Port %d\n", libusb_get_port_number(devices[i]));
+		//		printf(" - Addr %d\n", libusb_get_device_address(devices[i]));
 		
 		if (libusb_get_bus_number(devices[i]) == 1 &&	// specific for lower USB2 port on rPi 4 with raspbian
 			libusb_get_port_number(devices[i]) == 4) {
@@ -504,13 +533,13 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 	printf("Device has been opened!\n");
-//	deviceHandle = libusb_open_device_with_vid_pid(context, VENDOR, PRODUCT); //these are vendorID and productID I found for my usb device
-//	if(deviceHandle == NULL)
-//		cout<<"Cannot open device"<<endl;
-//	else
-//		cout<<"Device Opened"<<endl;
+	//	deviceHandle = libusb_open_device_with_vid_pid(context, VENDOR, PRODUCT); //these are vendorID and productID I found for my usb device
+	//	if(deviceHandle == NULL)
+	//		cout<<"Cannot open device"<<endl;
+	//	else
+	//		cout<<"Device Opened"<<endl;
 	libusb_free_device_list(devices, 1); //free the list, unref the devices in it
-
+	
 	
 	
 	if(libusb_kernel_driver_active(deviceHandle, 0) == 1) { //find out if kernel driver is attached
@@ -544,65 +573,105 @@ int main(int argc, char **argv) {
 	printf(" - iSerialNumber      : %d\n", deviceDescriptor.iSerialNumber);
 	printf(" - bNumConfigurations : %d\n", deviceDescriptor.bNumConfigurations);
 	
-	if (deviceDescriptor.bNumConfigurations != 1) {
-		printf("ERROR!  No support for multiple configurations, deviceDescriptor.bNumConfigurations = %d\n", deviceDescriptor.bNumConfigurations);
-	}
+	mEndpointZeroInfo.bNumConfigurations = deviceDescriptor.bNumConfigurations;
+	mEndpointZeroInfo.activeConfiguration = -1;
+	mEndpointZeroInfo.mConfigurationInfos = (ConfigurationInfo*)malloc( deviceDescriptor.bNumConfigurations * sizeof(ConfigurationInfo));
+	mEndpointZeroInfo.fd = fd;
+	mEndpointZeroInfo.dev_handle = deviceHandle;
 	
-	int configIndex = 0;
-	struct libusb_config_descriptor* configDescriptor;
+	//	if (deviceDescriptor.bNumConfigurations != 1) {
+	//		printf("ERROR!  No support for multiple configurations, deviceDescriptor.bNumConfigurations = %d\n", deviceDescriptor.bNumConfigurations);
+	//	}
 	
-	if(libusb_get_config_descriptor(libusb_get_device(deviceHandle), configIndex, &configDescriptor) != LIBUSB_SUCCESS) {
-		printf("FAILED! libusb_get_config_descriptor()");
-		exit(EXIT_FAILURE);
-	}
-	printf("Have Config Descriptor!");
-	printf(" - bLength            : %d\n", configDescriptor->bLength);
-	printf(" - bDescriptorType    : %d\n", configDescriptor->bDescriptorType);
-	printf(" - wTotalLength       : %d\n", configDescriptor->wTotalLength);
-	printf(" - bNumInterfaces     : %d\n", configDescriptor->bNumInterfaces);
-	printf(" - bConfigurationValue: %d\n", configDescriptor->bConfigurationValue);
-	printf(" - iConfiguration     : %d\n", configDescriptor->iConfiguration);
-	printf(" - bmAttributes       : %d\n", configDescriptor->bmAttributes);
-	printf(" - MaxPower           : %d\n", configDescriptor->MaxPower);
-	printf(" - extra_length       : %d\n", configDescriptor->extra_length);
-	
-	
-	int numInterfaces = configDescriptor->bNumInterfaces;
-	int totalEndpoints = 0;
-	for (int i = 0; i < numInterfaces; i++) {
-		int numAlternates = configDescriptor->interface[i].num_altsetting;
+	for( int configIndex = 0; configIndex < deviceDescriptor.bNumConfigurations; configIndex++ ) {
+		struct libusb_config_descriptor* configDescriptor;
 		
-		for (int a = 0; a < numAlternates; a++) {
-			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
-			printf(" | - Interface %d Alternate %d\n", interfaceDescriptor->bInterfaceNumber, a);
+		ConfigurationInfo* configInfo = &mEndpointZeroInfo.mConfigurationInfos[configIndex];
+		
+		if(libusb_get_config_descriptor(libusb_get_device(deviceHandle), configIndex, &configDescriptor) != LIBUSB_SUCCESS) {
+			printf("FAILED! libusb_get_config_descriptor()");
+			exit(EXIT_FAILURE);
+		}
+		printf("Have Config Descriptor!");
+		printf(" - bLength            : %d\n", configDescriptor->bLength);
+		printf(" - bDescriptorType    : %d\n", configDescriptor->bDescriptorType);
+		printf(" - wTotalLength       : %d\n", configDescriptor->wTotalLength);
+		printf(" - bNumInterfaces     : %d\n", configDescriptor->bNumInterfaces);
+		printf(" - bConfigurationValue: %d\n", configDescriptor->bConfigurationValue);
+		printf(" - iConfiguration     : %d\n", configDescriptor->iConfiguration);
+		printf(" - bmAttributes       : %d\n", configDescriptor->bmAttributes);
+		printf(" - MaxPower           : %d\n", configDescriptor->MaxPower);
+		printf(" - extra_length       : %d\n", configDescriptor->extra_length);
+		
+		configInfo->activeInterface = -1;
+		configInfo->bNumInterfaces = configDescriptor->bNumInterfaces;
+		configInfo->mInterfaceInfos = (InterfaceInfo *) malloc(configDescriptor->bNumInterfaces * sizeof(InterfaceInfo));
+		
+//		int numInterfaces = configDescriptor->bNumInterfaces;
+		int totalEndpoints = 0;
+		for (int i = 0; i < configDescriptor->bNumInterfaces; i++) {
+			int numAlternates = configDescriptor->interface[i].num_altsetting;
+			InterfaceInfo* interfaceInfo = &configInfo->mInterfaceInfos[i];
+//			interfaceInfo->active = false;
+			interfaceInfo->activeAlternate = -1;
+			interfaceInfo->bNumAlternates = numAlternates;
+			interfaceInfo->mAlternateInfos = (AlternateInfo*) malloc(numAlternates * sizeof(AlternateInfo));
 			
-			r = libusb_claim_interface(deviceHandle, interfaceDescriptor->bInterfaceNumber); //claim interface 0 (the first) of device (mine had jsut 1)
-			if(r < 0) {
-				printf("Cannot Claim Interface\n");
-				return 1;
-			}
-			//		printf("Claimed Interface %d\n", configDescriptor->interfaces[i].altsetting->bInterfaceNumber);
-			
-			totalEndpoints += interfaceDescriptor->bNumEndpoints;
-			printf("   - bNumEndpoints      : %d\n", interfaceDescriptor->bNumEndpoints);
-			printf("   - Endpoints          : \n");
-			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
-				libusb_set_interface_alt_setting(deviceHandle, i, a );	// no idea how to use this properly, but putting htis here wrok son a PS5 controller
+			for (int a = 0; a < numAlternates; a++) {
+				const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
+				AlternateInfo* alternateInfo = &interfaceInfo->mAlternateInfos[a];
+//				alternateInfo->active = false;
+				alternateInfo->bInterfaceNumber = interfaceDescriptor->bInterfaceNumber;
+				alternateInfo->bNumEndpoints = interfaceDescriptor->bNumEndpoints;
+				alternateInfo->mEndpointInfos = (EndpointInfo *) malloc(interfaceDescriptor->bNumEndpoints * sizeof(EndpointInfo));
 				
-				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
-				printf("   | - bEndpointAddress   : 0x%02x\n", endpointDescriptor->bEndpointAddress);
-				printf("     - wMaxPacketSize     : %d\n", endpointDescriptor->wMaxPacketSize);
-				printf("     - bmAttributes       : %d\n", endpointDescriptor->bmAttributes);
+				printf(" | - Interface %d Alternate %d\n", interfaceDescriptor->bInterfaceNumber, a);
 				
-				switch (endpointDescriptor->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
-					case LIBUSB_TRANSFER_TYPE_CONTROL: printf("     | - Control\n"); break;
-					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS: printf("     | - Isochronous\n"); break;
-					case LIBUSB_TRANSFER_TYPE_BULK: printf("     | - Bulk\n"); break;
-					case LIBUSB_TRANSFER_TYPE_INTERRUPT: printf("     | - Interrupt\n"); break;
-					default:
-						break;
+				r = libusb_claim_interface(deviceHandle, interfaceDescriptor->bInterfaceNumber); //claim interface 0 (the first) of device (mine had jsut 1)
+				if(r < 0) {
+					printf("Cannot Claim Interface\n");
+					return 1;
 				}
+				//		printf("Claimed Interface %d\n", configDescriptor->interfaces[i].altsetting->bInterfaceNumber);
 				
+				totalEndpoints += interfaceDescriptor->bNumEndpoints;
+				printf("   - bNumEndpoints      : %d\n", interfaceDescriptor->bNumEndpoints);
+				printf("   - Endpoints          : \n");
+				for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
+					libusb_set_interface_alt_setting(deviceHandle, i, a );	// no idea how to use this properly, but putting htis here wrok son a PS5 controller
+					const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
+					
+					EndpointInfo* endpointInfo = &alternateInfo->mEndpointInfos[e];
+					endpointInfo->fd = fd;
+					endpointInfo->ep_int = -1;
+					endpointInfo->deviceHandle = deviceHandle;
+					endpointInfo->keepRunning = true;
+					endpointInfo->stop = false;
+					endpointInfo->busyPackets = 0;
+					endpointInfo->usb_endpoint.bLength =	endpointDescriptor->bLength;
+					endpointInfo->usb_endpoint.bDescriptorType =	endpointDescriptor->bDescriptorType;
+					endpointInfo->usb_endpoint.bEndpointAddress = endpointDescriptor->bEndpointAddress;
+					endpointInfo->usb_endpoint.bmAttributes = endpointDescriptor->bmAttributes;
+					endpointInfo->usb_endpoint.wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
+					endpointInfo->usb_endpoint.bInterval = endpointDescriptor->bInterval;
+					endpointInfo->data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
+					
+					pthread_create(&endpointThreads[endpoint++], NULL, ep_loop_thread, endpointInfo);
+					
+					printf("   | - bEndpointAddress   : 0x%02x\n", endpointDescriptor->bEndpointAddress);
+					printf("     - wMaxPacketSize     : %d\n", endpointDescriptor->wMaxPacketSize);
+					printf("     - bmAttributes       : %d\n", endpointDescriptor->bmAttributes);
+					
+					switch (endpointDescriptor->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+						case LIBUSB_TRANSFER_TYPE_CONTROL: printf("     | - Control\n"); break;
+						case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS: printf("     | - Isochronous\n"); break;
+						case LIBUSB_TRANSFER_TYPE_BULK: printf("     | - Bulk\n"); break;
+						case LIBUSB_TRANSFER_TYPE_INTERRUPT: printf("     | - Interrupt\n"); break;
+						default:
+							break;
+					}
+					
+				}
 			}
 		}
 	}
@@ -613,68 +682,70 @@ int main(int argc, char **argv) {
 	printf("Starting raw-gadget");
 	usb_raw_init(fd, USB_SPEED_HIGH, driver, device);
 	usb_raw_run(fd);
-
+	
 	
 	// Build endpoint handling
-	printf("Starting endpoint threads");
-	EndpointInfo *mEndpointInfos = (EndpointInfo *)malloc(totalEndpoints * sizeof(EndpointInfo));
-	pthread_t *endpointThreads = (pthread_t *)malloc(totalEndpoints * sizeof(pthread_t));
+//	printf("Starting endpoint threads");
+//	EndpointInfo *mEndpointInfos = (EndpointInfo *)malloc(totalEndpoints * sizeof(EndpointInfo));
+//	pthread_t *endpointThreads = (pthread_t *)malloc(totalEndpoints * sizeof(pthread_t));
 	
-	int endpoint = 0;
-	for (int i = 0; i < numInterfaces; i++) {
-		int numAlternates = configDescriptor->interface[i].num_altsetting;
-		for (int a = 0; a < numAlternates; a++) {
-			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
-			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
-				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
-				mEndpointInfos[endpoint].data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
-				
-				mEndpointInfos[endpoint].usb_endpoint.bLength =	endpointDescriptor->bLength;
-				mEndpointInfos[endpoint].usb_endpoint.bDescriptorType =	endpointDescriptor->bDescriptorType;
-				mEndpointInfos[endpoint].usb_endpoint.bEndpointAddress = endpointDescriptor->bEndpointAddress;
-				mEndpointInfos[endpoint].usb_endpoint.bmAttributes = endpointDescriptor->bmAttributes;
-				mEndpointInfos[endpoint].usb_endpoint.wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
-				mEndpointInfos[endpoint].usb_endpoint.bInterval = endpointDescriptor->bInterval;
-				
-				mEndpointInfos[endpoint].deviceHandle = deviceHandle;
-				mEndpointInfos[endpoint].ep_int = -1;
-				mEndpointInfos[endpoint].keepRunning = true;
-				
-				mEndpointInfos[endpoint].fd = fd;
-				
-				pthread_create(&endpointThreads[endpoint], NULL, ep_loop_thread, &mEndpointInfos[endpoint]);
-				
-				endpoint++;
-			}
-		}
-	}
+//	int endpoint = 0;
+//	for (int i = 0; i < numInterfaces; i++) {
+//		int numAlternates = configDescriptor->interface[i].num_altsetting;
+//		for (int a = 0; a < numAlternates; a++) {
+//			const struct libusb_interface_descriptor *interfaceDescriptor = &configDescriptor->interface[i].altsetting[a];
+//			for (int e = 0; e < interfaceDescriptor->bNumEndpoints; e++) {
+//				const struct libusb_endpoint_descriptor *endpointDescriptor = &interfaceDescriptor->endpoint[e];
+////				mEndpointInfos[endpoint].data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
+////
+////				mEndpointInfos[endpoint].usb_endpoint.bLength =	endpointDescriptor->bLength;
+////				mEndpointInfos[endpoint].usb_endpoint.bDescriptorType =	endpointDescriptor->bDescriptorType;
+////				mEndpointInfos[endpoint].usb_endpoint.bEndpointAddress = endpointDescriptor->bEndpointAddress;
+////				mEndpointInfos[endpoint].usb_endpoint.bmAttributes = endpointDescriptor->bmAttributes;
+////				mEndpointInfos[endpoint].usb_endpoint.wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
+////				mEndpointInfos[endpoint].usb_endpoint.bInterval = endpointDescriptor->bInterval;
+////
+////				mEndpointInfos[endpoint].deviceHandle = deviceHandle;
+////				mEndpointInfos[endpoint].ep_int = -1;
+////				mEndpointInfos[endpoint].keepRunning = true;
+////
+////				mEndpointInfos[endpoint].fd = fd;
+//
+//				pthread_create(&endpointThreads[endpoint], NULL, ep_loop_thread, &mEndpointInfos[endpoint]);
+//
+////				endpoint++;
+//			}
+//		}
+//	}
 	
 	
 	
 	// Start ep0 thread afer endpoints, I believe
 	printf("Starting ep0 thread");
-	EndpointZeroInfo mEndpointZeroInfo;
-	mEndpointZeroInfo.mEndpointInfos = mEndpointInfos;
-	mEndpointZeroInfo.fd = fd;
-	mEndpointZeroInfo.dev_handle = deviceHandle;
-	mEndpointZeroInfo.totalEndpoints = totalEndpoints;
+//	EndpointZeroInfo mEndpointZeroInfo;
+//	mEndpointZeroInfo.configDescriptor = configDescriptor;
+//	mEndpointZeroInfo.mEndpointInfos = mEndpointInfos;
+//	mEndpointZeroInfo.fd = fd;
+//	mEndpointZeroInfo.dev_handle = deviceHandle;
+//	mEndpointZeroInfo.totalEndpoints = totalEndpoints;
 	pthread_t threadEp0;
 	pthread_create(&threadEp0, NULL, ep0_loop_thread, &mEndpointZeroInfo);//fd);
 	
 	
 	struct timeval timeout;
 	timeout.tv_sec = 0;
-	timeout.tv_usec = 1;
+	timeout.tv_usec = 0;
 	while(1) {
 		if(libusb_handle_events_timeout(context, &timeout) != LIBUSB_SUCCESS) {	// needed for iso transfers I believe
 			printf("libusb_handle_events() FAILED\n");
 		}
+		usleep(1);
 	}
 	close(fd);
 	
-	for (int i = 0; i < totalEndpoints; i++) {
-		free(mEndpointInfos[i].data);
-	}
-	free(mEndpointInfos);
+//	for (int i = 0; i < totalEndpoints; i++) {
+//		free(mEndpointInfos[i].data);
+//	}
+//	free(mEndpointInfos);
 	return 0;
 }

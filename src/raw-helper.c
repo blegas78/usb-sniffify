@@ -2,6 +2,7 @@
 
 #include "raw-helper.h"
 
+#include <assert.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <stdio.h>
@@ -12,6 +13,88 @@
 //#include <sys/types.h>
 
 #include <linux/hid.h>
+
+/*----------------------------------------------------------------------*/
+bool assign_ep_address(struct usb_raw_ep_info *info,
+					   struct usb_endpoint_descriptor *ep) {
+	if (usb_endpoint_num(ep) != 0)
+		return false;  // Already assigned.
+	if (usb_endpoint_dir_in(ep) && !info->caps.dir_in)
+		return false;
+	if (usb_endpoint_dir_out(ep) && !info->caps.dir_out)
+		return false;
+	switch (usb_endpoint_type(ep)) {
+		case USB_ENDPOINT_XFER_BULK:
+			if (!info->caps.type_bulk)
+				return false;
+			break;
+		case USB_ENDPOINT_XFER_INT:
+			if (!info->caps.type_int)
+				return false;
+			break;
+		default:
+			assert(false);
+	}
+	if (info->addr == USB_RAW_EP_ADDR_ANY) {
+		static int addr = 1;
+		ep->bEndpointAddress |= addr++;
+	} else
+		ep->bEndpointAddress |= info->addr;
+	return true;
+}
+
+void process_eps_info(EndpointZeroInfo* epZeroInfo) {
+	struct usb_raw_eps_info info;
+	memset(&info, 0, sizeof(info));
+	
+	int num = usb_raw_eps_info(epZeroInfo->fd, &info);
+	for (int i = 0; i < num; i++) {
+		printf("ep #%d:\n", i);
+		printf("  name: %s\n", &info.eps[i].name[0]);
+		printf("  addr: %u\n", info.eps[i].addr);
+		printf("  type: %s %s %s\n",
+			   info.eps[i].caps.type_iso ? "iso" : "___",
+			   info.eps[i].caps.type_bulk ? "blk" : "___",
+			   info.eps[i].caps.type_int ? "int" : "___");
+		printf("  dir : %s %s\n",
+			   info.eps[i].caps.dir_in ? "in " : "___",
+			   info.eps[i].caps.dir_out ? "out" : "___");
+		printf("  maxpacket_limit: %u\n",
+			   info.eps[i].limits.maxpacket_limit);
+		printf("  max_streams: %u\n", info.eps[i].limits.max_streams);
+	}
+	
+//	for (int e = 0; e < epZeroInfo->totalEndpoints; e++) {
+//		for (int i = 0; i < num; i++) {
+//			if (assign_ep_address(&info.eps[i], &epZeroInfo->mEndpointInfos[e].usb_endpoint))
+//				continue;
+//		}
+//
+//		int int_in_addr = usb_endpoint_num(&epZeroInfo->mEndpointInfos[e].usb_endpoint);
+//		assert(int_in_addr != 0);
+//		printf("int_in: addr = %u\n", int_in_addr);
+//	}
+	for (int c = 0; c < epZeroInfo->bNumConfigurations; c++) {
+		ConfigurationInfo* cInfo = &epZeroInfo->mConfigurationInfos[c];
+		for (int i = 0; i < cInfo->bNumInterfaces; i++) {
+			InterfaceInfo* iInfo = &cInfo->mInterfaceInfos[i];
+			for (int a = 0; a < iInfo->bNumAlternates; a++) {
+				AlternateInfo* aInfo = &iInfo->mAlternateInfos[a];
+				for (int e = 0; e < aInfo->bNumEndpoints; e++) {
+					EndpointInfo* eInfo = &aInfo->mEndpointInfos[e];
+					for (int k = 0; k < num; k++) {
+						if (assign_ep_address(&info.eps[k], &eInfo->usb_endpoint))
+							continue;
+					}
+
+					int int_in_addr = usb_endpoint_num(&eInfo->usb_endpoint);
+					assert(int_in_addr != 0);
+					printf("int_in: addr = %u\n", int_in_addr);
+				}
+			}
+		}
+	}
+}
 
 /*----------------------------------------------------------------------*/
 
@@ -95,6 +178,15 @@ int usb_raw_ep_enable(int fd, struct usb_endpoint_descriptor *desc) {
 	int rv = ioctl(fd, USB_RAW_IOCTL_EP_ENABLE, desc);
 	if (rv < 0) {
 		perror("ioctl(USB_RAW_IOCTL_EP_ENABLE)");
+		exit(EXIT_FAILURE);
+	}
+	return rv;
+}
+
+int usb_raw_ep_disable(int fd, uint32_t something) {
+	int rv = ioctl(fd, USB_RAW_IOCTL_EP_DISABLE, something);
+	if (rv < 0) {
+		perror("ioctl(USB_RAW_IOCTL_EP_DISABLE)");
 		exit(EXIT_FAILURE);
 	}
 	return rv;

@@ -237,35 +237,35 @@ int build_config(char *data, int length) {
 
 /*----------------------------------------------------------------------*/
 
-bool assign_ep_address(struct usb_raw_ep_info *info,
-				struct usb_endpoint_descriptor *ep) {
-	if (usb_endpoint_num(ep) != 0)
-		return false;  // Already assigned.
-	if (usb_endpoint_dir_in(ep) && !info->caps.dir_in)
-		return false;
-	if (usb_endpoint_dir_out(ep) && !info->caps.dir_out)
-		return false;
-	switch (usb_endpoint_type(ep)) {
-	case USB_ENDPOINT_XFER_BULK:
-		if (!info->caps.type_bulk)
-			return false;
-		break;
-	case USB_ENDPOINT_XFER_INT:
-		if (!info->caps.type_int)
-			return false;
-		break;
-	default:
-		assert(false);
-	}
-	if (info->addr == USB_RAW_EP_ADDR_ANY) {
-		static int addr = 1;
-		ep->bEndpointAddress |= addr++;
-	} else
-		ep->bEndpointAddress |= info->addr;
-	return true;
-}
+//bool assign_ep_address(struct usb_raw_ep_info *info,
+//				struct usb_endpoint_descriptor *ep) {
+//	if (usb_endpoint_num(ep) != 0)
+//		return false;  // Already assigned.
+//	if (usb_endpoint_dir_in(ep) && !info->caps.dir_in)
+//		return false;
+//	if (usb_endpoint_dir_out(ep) && !info->caps.dir_out)
+//		return false;
+//	switch (usb_endpoint_type(ep)) {
+//	case USB_ENDPOINT_XFER_BULK:
+//		if (!info->caps.type_bulk)
+//			return false;
+//		break;
+//	case USB_ENDPOINT_XFER_INT:
+//		if (!info->caps.type_int)
+//			return false;
+//		break;
+//	default:
+//		assert(false);
+//	}
+//	if (info->addr == USB_RAW_EP_ADDR_ANY) {
+//		static int addr = 1;
+//		ep->bEndpointAddress |= addr++;
+//	} else
+//		ep->bEndpointAddress |= info->addr;
+//	return true;
+//}
 
-void process_eps_info(int fd) {
+void process_eps_info_fd(int fd) {
 	struct usb_raw_eps_info info;
 	memset(&info, 0, sizeof(info));
 
@@ -584,7 +584,7 @@ bool ep0_loop(int fd) {
 		log_event((struct usb_raw_event *)&event);
 
 		if (event.inner.type == USB_RAW_EVENT_CONNECT)
-			process_eps_info(fd);
+			process_eps_info_fd(fd);
 
 		if (event.inner.type != USB_RAW_EVENT_CONTROL)
 			return false;//continue;
