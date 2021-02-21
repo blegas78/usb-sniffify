@@ -281,7 +281,7 @@ static void cb_transfer_int_out(struct libusb_transfer *xfr) {
 }
 void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 1) {
-		usleep(1000);
+		usleep(4000);
 		return;
 	}
 	
@@ -385,7 +385,7 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 //		prtinf("usbi_handling_events(HANDLE_CTX(dev_handle))\n");
 //	}
 	if (epInfo->busyPackets >= 1) {
-		//usleep(125);
+		usleep(4000);
 		return;
 	}
 	epInfo->busyPackets++;
