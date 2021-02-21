@@ -186,7 +186,7 @@ typedef struct {
 	int busyPackets; // to notice then EP is safe to be diasbled
 	
 	struct usb_endpoint_descriptor usb_endpoint;
-	
+	int bIntervalInMicroseconds;
 	unsigned char* data;
 } EndpointInfo;
 

@@ -281,7 +281,7 @@ static void cb_transfer_int_out(struct libusb_transfer *xfr) {
 }
 void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 1) {
-		usleep(4000);
+		usleep(epInfo->bIntervalInMicroseconds);
 		return;
 	}
 	
@@ -385,7 +385,7 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 //		prtinf("usbi_handling_events(HANDLE_CTX(dev_handle))\n");
 //	}
 	if (epInfo->busyPackets >= 1) {
-		usleep(4000);
+		usleep(epInfo->bIntervalInMicroseconds);
 		return;
 	}
 	epInfo->busyPackets++;
@@ -495,7 +495,7 @@ static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
 void ep_in_work_isochronous( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 1) {
 		//printf("ep_in_work_isochronous() is waiting on packets!\n");
-		usleep(125*8);
+		usleep(epInfo->bIntervalInMicroseconds);
 		return;
 	}
 	epInfo->busyPackets++;
@@ -546,7 +546,7 @@ static void cb_xfr(struct libusb_transfer *xfr) {
 void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 128) {
 		//printf("ep_out_work_isochronous() (audio out) is busy with packets\n");
-		usleep(125 * 8);
+		usleep(epInfo->bIntervalInMicroseconds);
 		return;
 	}
 	epInfo->busyPackets++;
@@ -558,6 +558,7 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	int transferred = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
 	if (transferred < 0) {
 		printf("No data vailable I guess?\n");
+		epInfo->busyPackets--;
 		return;
 	}
 	
@@ -645,7 +646,7 @@ void* ep_loop_thread( void* data ) {
 					case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
 						ep_out_work_isochronous( ep );
 
-						if (idleCount++ > 100) {
+						if (idleCount++ > 300) {
 							idleCount = 0;
 							fprintf(stderr, "Audio out buffered: ");
 							for (int i = 0; i < ep->busyPackets; i++) {
@@ -859,6 +860,7 @@ int main(int argc, char **argv) {
 					endpointInfo->usb_endpoint.bmAttributes = endpointDescriptor->bmAttributes;
 					endpointInfo->usb_endpoint.wMaxPacketSize = endpointDescriptor->wMaxPacketSize;
 					endpointInfo->usb_endpoint.bInterval = endpointDescriptor->bInterval;
+					endpointInfo->bIntervalInMicroseconds = pow(2, endpointDescriptor->bInterval) * 125;	// TODO: 125 may change to 1000 if device is low sped
 					endpointInfo->data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
 					
 					pthread_create(&endpointThreads[endpoint++], NULL, ep_loop_thread, endpointInfo);
