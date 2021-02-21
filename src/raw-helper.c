@@ -24,15 +24,23 @@ bool assign_ep_address(struct usb_raw_ep_info *info,
 	if (usb_endpoint_dir_out(ep) && !info->caps.dir_out)
 		return false;
 	switch (usb_endpoint_type(ep)) {
-		case USB_ENDPOINT_XFER_BULK:
+		case USB_ENDPOINT_XFER_CONTROL:	// 0
+			if (!info->caps.type_control)
+				return false;
+			break;
+		case USB_ENDPOINT_XFER_ISOC:	// 1
+			if (!info->caps.type_iso)
+				return false;
+			break;
+		case USB_ENDPOINT_XFER_BULK:	// 2
 			if (!info->caps.type_bulk)
 				return false;
 			break;
-		case USB_ENDPOINT_XFER_INT:
+		case USB_ENDPOINT_XFER_INT:		// 3
 			if (!info->caps.type_int)
 				return false;
 			break;
-		default:
+		default:	// Never reached
 			assert(false);
 	}
 	if (info->addr == USB_RAW_EP_ADDR_ANY) {
@@ -84,7 +92,7 @@ void process_eps_info(EndpointZeroInfo* epZeroInfo) {
 					EndpointInfo* eInfo = &aInfo->mEndpointInfos[e];
 					for (int k = 0; k < num; k++) {
 						if (assign_ep_address(&info.eps[k], &eInfo->usb_endpoint))
-							continue;
+							break;	// shouldn't this be a break?
 					}
 
 					int int_in_addr = usb_endpoint_num(&eInfo->usb_endpoint);
@@ -104,26 +112,6 @@ int usb_raw_open() {
 		perror("open()");
 		exit(EXIT_FAILURE);
 	}
-//	//int setNonblocking(int fd)
-//	//{
-//		int flags;
-//
-//		/* If they have O_NONBLOCK, use the Posix way to do it */
-////	#if defined(O_NONBLOCK)
-//		/* Fixme: O_NONBLOCK is defined but broken on SunOS 4.1.x and AIX 3.2.5. */
-//		if (-1 == (flags = fcntl(fd, F_GETFL, 0)))
-//			flags = 0;
-//		int rv = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-////	#else
-//		/* Otherwise, use the old way of doing it */
-////		flags = 1;
-////		 int rv = ioctl(fd, FIONBIO, &flags);
-//	if (rv < 0) {
-////	#endif
-//		perror("ioctl(fd, FIOBIO, &flags)");
-//		exit(EXIT_FAILURE);
-//	}
-//	//}
 	return fd;
 }
 
@@ -252,160 +240,161 @@ void usb_raw_ep_set_halt(int fd, int ep) {
 }
 
 /*----------------------------------------------------------------------*/
+// for unknown descriptors: https://elixir.bootlin.com/linux/v5.7/source/include/uapi/linux/usb
 
 void log_control_request(struct usb_ctrlrequest *ctrl) {
 	printf("  bRequestType: 0x%x (%s), bRequest: 0x%x, wValue: 0x%x,"
-		" wIndex: 0x%x, wLength: %d\n", ctrl->bRequestType,
-		(ctrl->bRequestType & USB_DIR_IN) ? "IN" : "OUT",
-		ctrl->bRequest, ctrl->wValue, ctrl->wIndex, ctrl->wLength);
-
+		   " wIndex: 0x%x, wLength: %d\n", ctrl->bRequestType,
+		   (ctrl->bRequestType & USB_DIR_IN) ? "IN" : "OUT",
+		   ctrl->bRequest, ctrl->wValue, ctrl->wIndex, ctrl->wLength);
+	
 	switch (ctrl->bRequestType & USB_TYPE_MASK) {
-	case USB_TYPE_STANDARD:
-		printf("  type = USB_TYPE_STANDARD\n");
-		break;
-	case USB_TYPE_CLASS:
-		printf("  type = USB_TYPE_CLASS\n");
-		break;
-	case USB_TYPE_VENDOR:
-		printf("  type = USB_TYPE_VENDOR\n");
-		break;
-	default:
-		printf("  type = unknown = %d\n", (int)ctrl->bRequestType);
-		break;
+		case USB_TYPE_STANDARD:
+			printf("  type = USB_TYPE_STANDARD\n");
+			break;
+		case USB_TYPE_CLASS:
+			printf("  type = USB_TYPE_CLASS\n");
+			break;
+		case USB_TYPE_VENDOR:
+			printf("  type = USB_TYPE_VENDOR\n");
+			break;
+		default:
+			printf("  type = unknown = %d\n", (int)ctrl->bRequestType);
+			break;
 	}
-
+	
 	switch (ctrl->bRequestType & USB_TYPE_MASK) {
-	case USB_TYPE_STANDARD:
-		switch (ctrl->bRequest) {
-		case USB_REQ_GET_DESCRIPTOR:
-			printf("  req = USB_REQ_GET_DESCRIPTOR\n");
-			switch (ctrl->wValue >> 8) {
-			case USB_DT_DEVICE:
-				printf("  desc = USB_DT_DEVICE\n");
-				break;
-			case USB_DT_CONFIG:
-				printf("  desc = USB_DT_CONFIG\n");
-				break;
-			case USB_DT_STRING:
-				printf("  desc = USB_DT_STRING\n");
-				break;
-			case USB_DT_INTERFACE:
-				printf("  desc = USB_DT_INTERFACE\n");
-				break;
-			case USB_DT_ENDPOINT:
-				printf("  desc = USB_DT_ENDPOINT\n");
-				break;
-			case USB_DT_DEVICE_QUALIFIER:
-				printf("  desc = USB_DT_DEVICE_QUALIFIER\n");
-				break;
-			case USB_DT_OTHER_SPEED_CONFIG:
-				printf("  desc = USB_DT_OTHER_SPEED_CONFIG\n");
-				break;
-			case USB_DT_INTERFACE_POWER:
-				printf("  desc = USB_DT_INTERFACE_POWER\n");
-				break;
-			case USB_DT_OTG:
-				printf("  desc = USB_DT_OTG\n");
-				break;
-			case USB_DT_DEBUG:
-				printf("  desc = USB_DT_DEBUG\n");
-				break;
-			case USB_DT_INTERFACE_ASSOCIATION:
-				printf("  desc = USB_DT_INTERFACE_ASSOCIATION\n");
-				break;
-			case USB_DT_SECURITY:
-				printf("  desc = USB_DT_SECURITY\n");
-				break;
-			case USB_DT_KEY:
-				printf("  desc = USB_DT_KEY\n");
-				break;
-			case USB_DT_ENCRYPTION_TYPE:
-				printf("  desc = USB_DT_ENCRYPTION_TYPE\n");
-				break;
-			case USB_DT_BOS:
-				printf("  desc = USB_DT_BOS\n");
-				break;
-			case USB_DT_DEVICE_CAPABILITY:
-				printf("  desc = USB_DT_DEVICE_CAPABILITY\n");
-				break;
-			case USB_DT_WIRELESS_ENDPOINT_COMP:
-				printf("  desc = USB_DT_WIRELESS_ENDPOINT_COMP\n");
-				break;
-			case USB_DT_PIPE_USAGE:
-				printf("  desc = USB_DT_PIPE_USAGE\n");
-				break;
-			case USB_DT_SS_ENDPOINT_COMP:
-				printf("  desc = USB_DT_SS_ENDPOINT_COMP\n");
-				break;
-			case HID_DT_HID:
-				printf("  descriptor = HID_DT_HID\n");
-				return;
-			case HID_DT_REPORT:
-				printf("  descriptor = HID_DT_REPORT\n");
-				return;
-			case HID_DT_PHYSICAL:
-				printf("  descriptor = HID_DT_PHYSICAL\n");
-				return;
-			default:
-				printf("  desc = unknown = 0x%x\n",
-							ctrl->wValue >> 8);
-				break;
+		case USB_TYPE_STANDARD:
+			switch (ctrl->bRequest) {
+				case USB_REQ_GET_DESCRIPTOR:
+					printf("  req = USB_REQ_GET_DESCRIPTOR\n");
+					switch (ctrl->wValue >> 8) {
+						case USB_DT_DEVICE:
+							printf("  desc = USB_DT_DEVICE\n");
+							break;
+						case USB_DT_CONFIG:
+							printf("  desc = USB_DT_CONFIG\n");
+							break;
+						case USB_DT_STRING:
+							printf("  desc = USB_DT_STRING\n");
+							break;
+						case USB_DT_INTERFACE:
+							printf("  desc = USB_DT_INTERFACE\n");
+							break;
+						case USB_DT_ENDPOINT:
+							printf("  desc = USB_DT_ENDPOINT\n");
+							break;
+						case USB_DT_DEVICE_QUALIFIER:
+							printf("  desc = USB_DT_DEVICE_QUALIFIER\n");
+							break;
+						case USB_DT_OTHER_SPEED_CONFIG:
+							printf("  desc = USB_DT_OTHER_SPEED_CONFIG\n");
+							break;
+						case USB_DT_INTERFACE_POWER:
+							printf("  desc = USB_DT_INTERFACE_POWER\n");
+							break;
+						case USB_DT_OTG:
+							printf("  desc = USB_DT_OTG\n");
+							break;
+						case USB_DT_DEBUG:
+							printf("  desc = USB_DT_DEBUG\n");
+							break;
+						case USB_DT_INTERFACE_ASSOCIATION:
+							printf("  desc = USB_DT_INTERFACE_ASSOCIATION\n");
+							break;
+						case USB_DT_SECURITY:
+							printf("  desc = USB_DT_SECURITY\n");
+							break;
+						case USB_DT_KEY:
+							printf("  desc = USB_DT_KEY\n");
+							break;
+						case USB_DT_ENCRYPTION_TYPE:
+							printf("  desc = USB_DT_ENCRYPTION_TYPE\n");
+							break;
+						case USB_DT_BOS:
+							printf("  desc = USB_DT_BOS\n");
+							break;
+						case USB_DT_DEVICE_CAPABILITY:
+							printf("  desc = USB_DT_DEVICE_CAPABILITY\n");
+							break;
+						case USB_DT_WIRELESS_ENDPOINT_COMP:
+							printf("  desc = USB_DT_WIRELESS_ENDPOINT_COMP\n");
+							break;
+						case USB_DT_PIPE_USAGE:
+							printf("  desc = USB_DT_PIPE_USAGE\n");
+							break;
+						case USB_DT_SS_ENDPOINT_COMP:
+							printf("  desc = USB_DT_SS_ENDPOINT_COMP\n");
+							break;
+						case HID_DT_HID:
+							printf("  descriptor = HID_DT_HID\n");
+							return;
+						case HID_DT_REPORT:
+							printf("  descriptor = HID_DT_REPORT\n");
+							return;
+						case HID_DT_PHYSICAL:
+							printf("  descriptor = HID_DT_PHYSICAL\n");
+							return;
+						default:
+							printf("  desc = unknown = 0x%x\n",
+								   ctrl->wValue >> 8);
+							break;
+					}
+					break;
+				case USB_REQ_SET_CONFIGURATION:
+					printf("  req = USB_REQ_SET_CONFIGURATION\n");
+					break;
+				case USB_REQ_GET_CONFIGURATION:
+					printf("  req = USB_REQ_GET_CONFIGURATION\n");
+					break;
+				case USB_REQ_SET_INTERFACE:
+					printf("  req = USB_REQ_SET_INTERFACE\n");
+					break;
+				case USB_REQ_GET_INTERFACE:
+					printf("  req = USB_REQ_GET_INTERFACE\n");
+					break;
+				case USB_REQ_GET_STATUS:
+					printf("  req = USB_REQ_GET_STATUS\n");
+					break;
+				case USB_REQ_CLEAR_FEATURE:
+					printf("  req = USB_REQ_CLEAR_FEATURE\n");
+					break;
+				case USB_REQ_SET_FEATURE:
+					printf("  req = USB_REQ_SET_FEATURE\n");
+					break;
+				default:
+					printf("  req = unknown = 0x%x\n", ctrl->bRequest);
+					break;
 			}
 			break;
-		case USB_REQ_SET_CONFIGURATION:
-			printf("  req = USB_REQ_SET_CONFIGURATION\n");
-			break;
-		case USB_REQ_GET_CONFIGURATION:
-			printf("  req = USB_REQ_GET_CONFIGURATION\n");
-			break;
-		case USB_REQ_SET_INTERFACE:
-			printf("  req = USB_REQ_SET_INTERFACE\n");
-			break;
-		case USB_REQ_GET_INTERFACE:
-			printf("  req = USB_REQ_GET_INTERFACE\n");
-			break;
-		case USB_REQ_GET_STATUS:
-			printf("  req = USB_REQ_GET_STATUS\n");
-			break;
-		case USB_REQ_CLEAR_FEATURE:
-			printf("  req = USB_REQ_CLEAR_FEATURE\n");
-			break;
-		case USB_REQ_SET_FEATURE:
-			printf("  req = USB_REQ_SET_FEATURE\n");
-			break;
-		default:
-			printf("  req = unknown = 0x%x\n", ctrl->bRequest);
-			break;
-		}
-		break;
-	case USB_TYPE_CLASS:
-		switch (ctrl->bRequest) {
-		case HID_REQ_GET_REPORT:
-			printf("  req = HID_REQ_GET_REPORT\n");
-			break;
-		case HID_REQ_GET_IDLE:
-			printf("  req = HID_REQ_GET_IDLE\n");
-			break;
-		case HID_REQ_GET_PROTOCOL:
-			printf("  req = HID_REQ_GET_PROTOCOL\n");
-			break;
-		case HID_REQ_SET_REPORT:
-			printf("  req = HID_REQ_SET_REPORT\n");
-			break;
-		case HID_REQ_SET_IDLE:
-			printf("  req = HID_REQ_SET_IDLE\n");
-			break;
-		case HID_REQ_SET_PROTOCOL:
-			printf("  req = HID_REQ_SET_PROTOCOL\n");
+		case USB_TYPE_CLASS:
+			switch (ctrl->bRequest) {
+				case HID_REQ_GET_REPORT:
+					printf("  req = HID_REQ_GET_REPORT\n");
+					break;
+				case HID_REQ_GET_IDLE:
+					printf("  req = HID_REQ_GET_IDLE\n");
+					break;
+				case HID_REQ_GET_PROTOCOL:
+					printf("  req = HID_REQ_GET_PROTOCOL\n");
+					break;
+				case HID_REQ_SET_REPORT:
+					printf("  req = HID_REQ_SET_REPORT\n");
+					break;
+				case HID_REQ_SET_IDLE:
+					printf("  req = HID_REQ_SET_IDLE\n");
+					break;
+				case HID_REQ_SET_PROTOCOL:
+					printf("  req = HID_REQ_SET_PROTOCOL\n");
+					break;
+				default:
+					printf("  req = unknown = 0x%x\n", ctrl->bRequest);
+					break;
+			}
 			break;
 		default:
 			printf("  req = unknown = 0x%x\n", ctrl->bRequest);
 			break;
-		}
-		break;
-	default:
-		printf("  req = unknown = 0x%x\n", ctrl->bRequest);
-		break;
 	}
 }
 
