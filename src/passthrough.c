@@ -290,7 +290,7 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 	io.inner.flags = 0;
 	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
 	
-	int rv = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
+	int transferred = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
 //	printf("ep_out_work_interrupt(): %d - ", rv);
 //	for (int i = 0; i < rv; i++) {
 //		printf("%02x ", io.inner.data[i]);
@@ -298,36 +298,44 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 //	printf("\n");
 	
 	//unsigned char data[48];
-	int transferred = rv;
+	//int transferred = rv;
 	
-	memcpy(epInfo->data, &io.inner.data[0], transferred);
+	//memcpy(epInfo->data, &io.inner.data[0], transferred);
 	
-//	int r = libusb_interrupt_transfer(epInfo->deviceHandle,
-//									  epInfo->usb_endpoint.bEndpointAddress,
-//									  epInfo->data,
-//									  rv,
-//									  &transferred,
-//									  0 );
-//	if (r != 0) {
-//		//	printf("libusb_interrupt_transfer FAIL\n");
-//		return;
-//	}
-	
-	epInfo->busyPackets++;
+	//epInfo->busyPackets++;
 	struct libusb_transfer *transfer;
 	transfer = libusb_alloc_transfer(0);
 	if (transfer == NULL) {
 		printf("ERROR: libusb_alloc_transfer(0) no memory");
 	}
-	libusb_fill_interrupt_transfer(	transfer,
-								   epInfo->deviceHandle,
-								   epInfo->usb_endpoint.bEndpointAddress,
-								   epInfo->data,
-								   epInfo->usb_endpoint.wMaxPacketSize,
-								   cb_transfer_int_out,
-								   epInfo,
-								   0 );
+	switch(epInfo->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+		case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+			libusb_fill_interrupt_transfer(	transfer,
+										   epInfo->deviceHandle,
+										   epInfo->usb_endpoint.bEndpointAddress,
+										   &io.inner.data[0],//epInfo->data,
+										   transferred,//epInfo->usb_endpoint.wMaxPacketSize,
+										   cb_transfer_int_out,
+										   epInfo,
+										   0 );
+			break;
+		case LIBUSB_TRANSFER_TYPE_BULK:
+			libusb_fill_bulk_transfer(	transfer,
+									  epInfo->deviceHandle,
+									  epInfo->usb_endpoint.bEndpointAddress,
+									  &io.inner.data[0],//epInfo->data,
+									  transferred,//epInfo->usb_endpoint.wMaxPacketSize,
+									  cb_transfer_int_out,
+									  epInfo,
+									  0 );
+			break;
+		default:
+			printf("ERROR! p_out_work_interrupt() unknopwn transfer type\n");
+			return;
+	}
+			
 
+	epInfo->busyPackets++;
 	if(libusb_submit_transfer(transfer) != LIBUSB_SUCCESS) {
 		printf("ERROR! libusb_submit_transfer(transfer) in ep_in_work_interrupt()\n");
 		exit(EXIT_FAILURE);
@@ -346,7 +354,6 @@ static void cb_transfer_int_in(struct libusb_transfer *xfr) {
 	io.inner.flags = 0;
 	io.inner.length = xfr->actual_length;//0;//epInfo->wMaxPacketSize;
 	
-	// TODO: everything, really
 	//printf("Sending to ep 0x%02x %d\n", io.inner.ep, io.inner.length);
 	//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
 	memcpy(&io.inner.data[0], xfr->buffer, xfr->actual_length);
@@ -394,14 +401,33 @@ void ep_in_work_interrupt( EndpointInfo* epInfo ) {
 	if (transfer == NULL) {
 		printf("ERROR: libusb_alloc_transfer(0) no memory");
 	}
-	libusb_fill_interrupt_transfer(	transfer,
-								   epInfo->deviceHandle,
-								   epInfo->usb_endpoint.bEndpointAddress,
-								   epInfo->data,
-								   epInfo->usb_endpoint.wMaxPacketSize,
-								   cb_transfer_int_in,
-								   epInfo,
-								   0 );
+	switch(epInfo->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+		case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+			libusb_fill_interrupt_transfer(	transfer,
+										   epInfo->deviceHandle,
+										   epInfo->usb_endpoint.bEndpointAddress,
+										   epInfo->data,
+										   epInfo->usb_endpoint.wMaxPacketSize,
+										   cb_transfer_int_in,
+										   epInfo,
+										   0 );
+			break;
+		case LIBUSB_TRANSFER_TYPE_BULK:	// TODO: need to accounf fo bulk streams maybe
+			libusb_fill_bulk_transfer(	transfer,
+										   epInfo->deviceHandle,
+										   epInfo->usb_endpoint.bEndpointAddress,
+										   epInfo->data,
+										   epInfo->usb_endpoint.wMaxPacketSize,
+										   cb_transfer_int_in,
+										   epInfo,
+										   0 );
+			
+			break;
+		default:
+			printf("ERROR! ep_in_work_interrupt) unknopwn transfer type\n");
+			return;
+	}
+	
 //	unsigned char *newBuffer = (unsigned char*)malloc(epInfo->usb_endpoint.wMaxPacketSize);
 //	if (!newBuffer) {		// also added
 //		libusb_free_transfer(transfer);
@@ -612,6 +638,7 @@ void* ep_loop_thread( void* data ) {
 			if (ep->usb_endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) {	// data in
 				switch (ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+					case LIBUSB_TRANSFER_TYPE_BULK:
 						ep_in_work_interrupt( ep );
 						//usleep(pow(2, ep->usb_endpoint.bInterval-1) * 125);
 						//usleep(1000);
@@ -630,7 +657,6 @@ void* ep_loop_thread( void* data ) {
 //						}
 						break;
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
-					case LIBUSB_TRANSFER_TYPE_BULK:
 					default:
 						printf("Unsupported ep->bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK\n");
 						usleep(1000);
@@ -639,6 +665,7 @@ void* ep_loop_thread( void* data ) {
 			} else { // data out
 				switch (ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
 					case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+					case LIBUSB_TRANSFER_TYPE_BULK:
 						//usleep(pow(2, ep->usb_endpoint.bInterval-1) * 125);
 						//usleep(1000);
 						ep_out_work_interrupt( ep );
@@ -657,7 +684,6 @@ void* ep_loop_thread( void* data ) {
 						//usleep(125);
 						break;
 					case LIBUSB_TRANSFER_TYPE_CONTROL:
-					case LIBUSB_TRANSFER_TYPE_BULK:
 					default:
 						printf("Unsupported ep->bEndpointAddress\n");
 						usleep(1000);
