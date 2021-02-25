@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <pthread.h>
+
 //#include <linux/hid.h>
 #include <linux/usb/ch9.h>
 
@@ -184,6 +186,8 @@ typedef struct {
 	bool keepRunning;	// thread management, mostly unused
 	bool stop;	// for endpoint termination from interface switching
 	int busyPackets; // to notice then EP is safe to be diasbled
+	
+	pthread_t thread;	// for runnign data transfers
 	
 	struct usb_endpoint_descriptor usb_endpoint;
 	int bIntervalInMicroseconds;

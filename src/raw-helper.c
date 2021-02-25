@@ -107,7 +107,7 @@ void process_eps_info(EndpointZeroInfo* epZeroInfo) {
 /*----------------------------------------------------------------------*/
 
 int usb_raw_open() {
-	int fd = open("/dev/raw-gadget", O_RDWR );
+	int fd = open("/dev/raw-gadget", O_RDWR | O_NONBLOCK );
 	if (fd < 0) {
 		perror("open()");
 		exit(EXIT_FAILURE);
@@ -193,7 +193,7 @@ int usb_raw_ep_write(int fd, struct usb_raw_ep_io *io) {
 	int rv = ioctl(fd, USB_RAW_IOCTL_EP_WRITE, io);
 	if (rv < 0) {
 		perror("ioctl(USB_RAW_IOCTL_EP_WRITE)");
-		exit(EXIT_FAILURE);
+		//exit(EXIT_FAILURE);
 	}
 	return rv;
 }

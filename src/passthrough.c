@@ -23,6 +23,9 @@
 
 #include "raw-helper.h"
 
+
+void* ep_loop_thread( void* data );
+
 /*----------------------------------------------------------------------*/
 
 void setEndpoint(AlternateInfo* info, int endpoint, bool enable) {
@@ -32,15 +35,21 @@ void setEndpoint(AlternateInfo* info, int endpoint, bool enable) {
 		endpointInfo->ep_int = usb_raw_ep_enable(endpointInfo->fd, &endpointInfo->usb_endpoint);
 		//libusb_set_interface_alt_setting
 		endpointInfo->stop = false;
+		endpointInfo->keepRunning = true;
+		pthread_create(&endpointInfo->thread, NULL, ep_loop_thread, endpointInfo);
 	} else {	// may need mutex here
 		int temp = endpointInfo->ep_int;
 		endpointInfo->stop = true;
-		while(endpointInfo->busyPackets > 0) {
-			usleep(100);
-		}
+		endpointInfo->keepRunning = false;
+//		while(endpointInfo->busyPackets > 0) {
+//			usleep(100);
+//		}
+		pthread_join(endpointInfo->thread, NULL);
+		
 		printf(" - - - Attempting to disable EP with: %d\n", temp);
 		int ret = usb_raw_ep_disable(endpointInfo->fd, temp);
-		printf(" - - - No idea abbout this ep diable return: %d\n", ret);
+		printf(" - - - No idea about this ep disable return: %d\n", ret);
+		endpointInfo->ep_int = ret;
 		
 	}
 	printf(" ---- 0x%02x ep_int = %d\n", endpointInfo->usb_endpoint.bEndpointAddress, endpointInfo->ep_int);
@@ -116,7 +125,7 @@ void setConfiguration(EndpointZeroInfo* info, int configuration) {
 }
 
 
-char dummyBuffer[4096];
+//char dummyBuffer[4096];
 bool ep0_request(EndpointZeroInfo* info, struct usb_raw_control_event *event,
 				 struct usb_raw_control_io *io, bool *done) {
 	int r;
@@ -268,7 +277,7 @@ void* ep0_loop_thread( void* data ) {
 }
 
 
-static void cb_transfer_int_out(struct libusb_transfer *xfr) {
+static void cb_transfer_out(struct libusb_transfer *xfr) {
 	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
 		fprintf(stderr, "transfer status %d\n", xfr->status);
 		return;
@@ -296,7 +305,13 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 //		printf("%02x ", io.inner.data[i]);
 //	}
 //	printf("\n");
-	
+	if (transferred <= 0) {	// Shoudl we stil relay a packet of size 0?
+		if (transferred < 0) {
+			printf("WARNING: usb_raw_ep_read() returned %d in ep_out_work_interrupt()\n", transferred);
+		}
+		usleep(epInfo->bIntervalInMicroseconds);
+		return;
+	}
 	//unsigned char data[48];
 	//int transferred = rv;
 	
@@ -315,7 +330,7 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 										   epInfo->usb_endpoint.bEndpointAddress,
 										   &io.inner.data[0],//epInfo->data,
 										   transferred,//epInfo->usb_endpoint.wMaxPacketSize,
-										   cb_transfer_int_out,
+										   cb_transfer_out,
 										   epInfo,
 										   0 );
 			break;
@@ -325,7 +340,7 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 									  epInfo->usb_endpoint.bEndpointAddress,
 									  &io.inner.data[0],//epInfo->data,
 									  transferred,//epInfo->usb_endpoint.wMaxPacketSize,
-									  cb_transfer_int_out,
+									  cb_transfer_out,
 									  epInfo,
 									  0 );
 			break;
@@ -337,131 +352,22 @@ void ep_out_work_interrupt( EndpointInfo* epInfo ) {
 
 	epInfo->busyPackets++;
 	if(libusb_submit_transfer(transfer) != LIBUSB_SUCCESS) {
-		printf("ERROR! libusb_submit_transfer(transfer) in ep_in_work_interrupt()\n");
+		printf("ERROR! libusb_submit_transfer(transfer) in ep_out_work_interrupt()\n");
 		exit(EXIT_FAILURE);
 	}
 }
 
-static void cb_transfer_int_in(struct libusb_transfer *xfr) {
+static void cb_transfer_in(struct libusb_transfer *xfr) {
 	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
 		fprintf(stderr, "transfer status %d\n", xfr->status);
 		return;
 	}
-	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
 	
+	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
 	struct usb_raw_int_io io;
 	io.inner.ep = epInfo->ep_int;
 	io.inner.flags = 0;
-	io.inner.length = xfr->actual_length;//0;//epInfo->wMaxPacketSize;
 	
-	//printf("Sending to ep 0x%02x %d\n", io.inner.ep, io.inner.length);
-	//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
-	memcpy(&io.inner.data[0], xfr->buffer, xfr->actual_length);
-	
-	int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
-	
-	epInfo->busyPackets--;
-	libusb_free_transfer(xfr);
-}
-void ep_in_work_interrupt( EndpointInfo* epInfo ) {
-//	struct usb_raw_int_io io;
-//	io.inner.ep = epInfo->ep_int;//ep_int_in;// | 0X04;
-//	io.inner.flags = 0;
-//	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
-//	//printf("$$$$$$$$$ reading from lusbusb 0x%02x length: %d\n", epInfo->usb_endpoint.bEndpointAddress, epInfo->usb_endpoint.wMaxPacketSize);
-//	int transferred = epInfo->usb_endpoint.wMaxPacketSize;
-//	int r = libusb_interrupt_transfer(epInfo->deviceHandle,
-//									  epInfo->usb_endpoint.bEndpointAddress,
-//									  epInfo->data,
-//									  epInfo->usb_endpoint.wMaxPacketSize,
-//									  &transferred,
-//									  0 );
-//	if (r != 0) {
-//		printf("libusb_interrupt_transfer FAIL r = %d\n", r);
-//		return;
-//	}
-//	//printf("Read %d from controller\n", transferred);
-//	memcpy(&io.inner.data[0], epInfo->data, transferred);
-//	//io.inner.length = transferred;
-//
-//	int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
-//	if (rv < 0) {
-//		// error?
-//	}
-//	if (usbi_handling_events(HANDLE_CTX(dev_handle))){
-//		prtinf("usbi_handling_events(HANDLE_CTX(dev_handle))\n");
-//	}
-	if (epInfo->busyPackets >= 1) {
-		usleep(epInfo->bIntervalInMicroseconds);
-		return;
-	}
-	epInfo->busyPackets++;
-	struct libusb_transfer *transfer;
-	transfer = libusb_alloc_transfer(0);
-	if (transfer == NULL) {
-		printf("ERROR: libusb_alloc_transfer(0) no memory");
-	}
-	switch(epInfo->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
-		case LIBUSB_TRANSFER_TYPE_INTERRUPT:
-			libusb_fill_interrupt_transfer(	transfer,
-										   epInfo->deviceHandle,
-										   epInfo->usb_endpoint.bEndpointAddress,
-										   epInfo->data,
-										   epInfo->usb_endpoint.wMaxPacketSize,
-										   cb_transfer_int_in,
-										   epInfo,
-										   0 );
-			break;
-		case LIBUSB_TRANSFER_TYPE_BULK:	// TODO: need to accounf fo bulk streams maybe
-			libusb_fill_bulk_transfer(	transfer,
-										   epInfo->deviceHandle,
-										   epInfo->usb_endpoint.bEndpointAddress,
-										   epInfo->data,
-										   epInfo->usb_endpoint.wMaxPacketSize,
-										   cb_transfer_int_in,
-										   epInfo,
-										   0 );
-			
-			break;
-		default:
-			printf("ERROR! ep_in_work_interrupt) unknopwn transfer type\n");
-			return;
-	}
-	
-//	unsigned char *newBuffer = (unsigned char*)malloc(epInfo->usb_endpoint.wMaxPacketSize);
-//	if (!newBuffer) {		// also added
-//		libusb_free_transfer(transfer);
-//		return;// LIBUSB_ERROR_NO_MEM;
-//	}
-//
-//	libusb_fill_bulk_transfer(transfer,
-//							  epInfo->deviceHandle,
-//							  epInfo->usb_endpoint.bEndpointAddress,
-//							  newBuffer,
-//							  epInfo->usb_endpoint.wMaxPacketSize,
-//							  cb_transfer_int_in,
-//							  epInfo,
-//							  0);
-//		transfer->type = LIBUSB_TRANSFER_TYPE_INTERRUPT;
-//
-//	if ((epInfo->usb_endpoint.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_OUT) {	// I added this too
-//		memcpy( newBuffer, epInfo->data, epInfo->usb_endpoint.wMaxPacketSize);
-//	}
-//	transfer->flags = LIBUSB_TRANSFER_FREE_BUFFER;	// also added this
-
-	if(libusb_submit_transfer(transfer) != LIBUSB_SUCCESS) {
-		printf("ERROR! libusb_submit_transfer(transfer) in ep_in_work_interrupt()\n");
-		exit(EXIT_FAILURE);
-	}
-}
-
-//int yesImDone = true;
-static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
-	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
-		fprintf(stderr, "transfer status %d\n", xfr->status);
-		return;
-	}
-	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
 	if (xfr->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
 		//printf("cb_transfer_iso_in() nmeeds to handle %d iso packets\n",xfr->num_iso_packets );
 		for (int i = 0; i < xfr->num_iso_packets; i++) {
@@ -473,13 +379,8 @@ static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
 			}
 			
 			//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
+
 			
-			
-			
-			
-			struct usb_raw_int_io io;
-			io.inner.ep = epInfo->ep_int;
-			io.inner.flags = 0;
 			io.inner.length = pack->actual_length;//0;//epInfo->wMaxPacketSize;
 			
 			// TODO: everything, really
@@ -512,11 +413,126 @@ static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
 			}
 			//printf("Dine!\n");
 		}
+	} else {
+		io.inner.length = xfr->actual_length;//0;//epInfo->wMaxPacketSize;
+		
+		//printf("Sending to ep 0x%02x %d\n", io.inner.ep, io.inner.length);
+		//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
+		memcpy(&io.inner.data[0], xfr->buffer, xfr->actual_length);
+		
+		int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
 	}
+	
 	epInfo->busyPackets--;
-	//yesImDone = true;
 	libusb_free_transfer(xfr);
 }
+void ep_in_work_interrupt( EndpointInfo* epInfo ) {
+
+	if (epInfo->busyPackets >= 1) {
+		usleep(epInfo->bIntervalInMicroseconds);
+		return;
+	}
+	epInfo->busyPackets++;
+	struct libusb_transfer *transfer;
+	transfer = libusb_alloc_transfer(0);
+	if (transfer == NULL) {
+		printf("ERROR: libusb_alloc_transfer(0) no memory");
+	}
+	switch(epInfo->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) {
+		case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+			libusb_fill_interrupt_transfer(	transfer,
+										   epInfo->deviceHandle,
+										   epInfo->usb_endpoint.bEndpointAddress,
+										   epInfo->data,
+										   epInfo->usb_endpoint.wMaxPacketSize,
+										   cb_transfer_in,
+										   epInfo,
+										   0 );
+			break;
+		case LIBUSB_TRANSFER_TYPE_BULK:	// TODO: need to accounf fo bulk streams maybe
+			libusb_fill_bulk_transfer(	transfer,
+										   epInfo->deviceHandle,
+										   epInfo->usb_endpoint.bEndpointAddress,
+										   epInfo->data,
+										   epInfo->usb_endpoint.wMaxPacketSize,
+										   cb_transfer_in,
+										   epInfo,
+										   0 );
+			
+			break;
+		default:
+			printf("ERROR! ep_in_work_interrupt) unknopwn transfer type\n");
+			return;
+	}
+
+	if(libusb_submit_transfer(transfer) != LIBUSB_SUCCESS) {
+		printf("ERROR! libusb_submit_transfer(transfer) in ep_in_work_interrupt()\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+////int yesImDone = true;
+//static void cb_transfer_iso_in(struct libusb_transfer *xfr) {
+//	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
+//		fprintf(stderr, "transfer status %d\n", xfr->status);
+//		return;
+//	}
+//	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
+//	if (xfr->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
+//		//printf("cb_transfer_iso_in() nmeeds to handle %d iso packets\n",xfr->num_iso_packets );
+//		for (int i = 0; i < xfr->num_iso_packets; i++) {
+//			struct libusb_iso_packet_descriptor *pack = &xfr->iso_packet_desc[i];
+//
+//			if (pack->status != LIBUSB_TRANSFER_COMPLETED) {
+//				fprintf(stderr, "Error: pack %u status %d\n", i, pack->status);
+//				continue;
+//			}
+//
+//			//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
+//
+//
+//
+//
+//			struct usb_raw_int_io io;
+//			io.inner.ep = epInfo->ep_int;
+//			io.inner.flags = 0;
+//			io.inner.length = pack->actual_length;//0;//epInfo->wMaxPacketSize;
+//
+//			// TODO: everything, really
+//			//printf("Sending to ep 0x%02x %d\n", io.inner.ep, io.inner.length);
+//			//			memcpy(&io.inner.data[0], epInfo->data, pack->actual_length);
+//			memcpy(&io.inner.data[0], xfr->buffer, pack->actual_length);
+//
+//			//			struct pollfd fds[1];
+//			//			fds[0].fd = epInfo->fd;
+//			//			fds[0].events = POLLOUT;
+//			//			int timeout = 1;
+//			//			int ready;
+//			//			if ( (ready = poll ( fds, 1, 1 )) == 0 )
+//			//			{
+//			//				printf("Not ready to send!\n");
+//			//				libusb_free_transfer(xfr);
+//			//				return;
+//			//			}
+//			//			printf("Ready: %d\n", ready);
+////			int flags;
+////			flags = fcntl(epInfo->fd, F_GETFL, 0);
+////			if (-1 == flags) {
+////				printf("-1 == flagsd %d\n", flags);
+////				return ;
+////			}
+////			fcntl(epInfo->fd, F_SETFL, flags | O_NONBLOCK);
+//			int rv = usb_raw_ep_write(epInfo->fd, (struct usb_raw_ep_io *)&io);
+//			if (rv < 0) {
+//				printf("Error! iso write to host  usb_raw_ep_write() returned %d\n", rv);
+//			}
+//			//printf("Dine!\n");
+//		}
+//	}
+//	epInfo->busyPackets--;
+//	//yesImDone = true;
+//	libusb_free_transfer(xfr);
+//}
 
 void ep_in_work_isochronous( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 1) {
@@ -536,7 +552,7 @@ void ep_in_work_isochronous( EndpointInfo* epInfo ) {
 							 epInfo->data,
 							 epInfo->usb_endpoint.wMaxPacketSize,
 							 num_iso_pack,
-							 cb_transfer_iso_in,
+							 cb_transfer_in,
 							 epInfo,
 							 0);
 	libusb_set_iso_packet_lengths(xfr, epInfo->usb_endpoint.wMaxPacketSize/num_iso_pack);
@@ -547,28 +563,6 @@ void ep_in_work_isochronous( EndpointInfo* epInfo ) {
 	//usleep(10000);
 }
 
-static void cb_xfr(struct libusb_transfer *xfr) {
-	if (xfr->status != LIBUSB_TRANSFER_COMPLETED) {
-		fprintf(stderr, "transfer status %d\n", xfr->status);
-		return;
-	}
-	EndpointInfo* epInfo = (EndpointInfo*)xfr->user_data;
-//	if (xfr->type == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
-//		for (int i = 0; i < xfr->num_iso_packets; i++) {
-//			struct libusb_iso_packet_descriptor *pack = &xfr->iso_packet_desc[i];
-//
-//			if (pack->status != LIBUSB_TRANSFER_COMPLETED) {
-//				fprintf(stderr, "Error: pack %u status %d\n", i, pack->status);
-//				//exit(5);
-//			}
-//
-//			//			printf("pack%u length:%u, actual_length:%u\n", i, pack->length, pack->actual_length);
-//		}
-//	}
-	//	printf("xfr Success!\n");
-	epInfo->busyPackets--;
-	libusb_free_transfer(xfr);
-}
 void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	if (epInfo->busyPackets >= 128) {
 		//printf("ep_out_work_isochronous() (audio out) is busy with packets\n");
@@ -582,8 +576,9 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 	io.inner.length = epInfo->usb_endpoint.wMaxPacketSize;
 	
 	int transferred = usb_raw_ep_read(epInfo->fd, (struct usb_raw_ep_io *)&io);
-	if (transferred < 0) {
-		printf("No data vailable I guess?\n");
+	if (transferred <= 0) {
+		printf("ep_out_work_isochronous(): No data available I guess? trasnferred = %d\n", transferred);
+		usleep(epInfo->bIntervalInMicroseconds);
 		epInfo->busyPackets--;
 		return;
 	}
@@ -610,7 +605,7 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 							 &io.inner.data[0],//epInfo->data,
 							 transferred,
 							 num_iso_pack,
-							 cb_xfr,
+							 cb_transfer_out,
 							 epInfo,
 							 0);
 	libusb_set_iso_packet_lengths(xfr, transferred/num_iso_pack);
@@ -624,10 +619,12 @@ void ep_out_work_isochronous( EndpointInfo* epInfo ) {
 
 void* ep_loop_thread( void* data ) {
 	EndpointInfo *ep = (EndpointInfo*)data;
+	
+	printf("Starting thread for endpoint 0x%02x\n", ep->usb_endpoint.bEndpointAddress);
 	int idleDelay = 1000000;
 	int idleCount = 0;
 	bool priorenable = false;
-	while(ep->keepRunning) {
+	while(ep->keepRunning || (ep->busyPackets > 0)) {
 		if (ep->ep_int >= 0 && !ep->stop) {
 			if (priorenable == false &&
 				(ep->usb_endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
@@ -692,7 +689,7 @@ void* ep_loop_thread( void* data ) {
 			}
 			
 			//usleep(pow(2, ep->usb_endpoint.bInterval-1) * 125);// not sure if binterval should be trusted, nor if it's 125 or 1000.  should also be 2^(interval-1)
-		} else {
+		} else {	// reaching here means we are simply cleaning things up
 			idleCount++;
 			if (idleCount > 1000000/idleDelay) {
 				idleCount = 0;
@@ -704,6 +701,9 @@ void* ep_loop_thread( void* data ) {
 			usleep(idleDelay);
 		}
 	}
+	
+	printf("Terminating thread for endpoint 0x%02x\n", ep->usb_endpoint.bEndpointAddress);
+	
 	return NULL;
 }
 
@@ -889,7 +889,7 @@ int main(int argc, char **argv) {
 					endpointInfo->bIntervalInMicroseconds = pow(2, endpointDescriptor->bInterval) * 125;	// TODO: 125 may change to 1000 if device is low sped
 					endpointInfo->data = (unsigned char*)malloc( endpointDescriptor->wMaxPacketSize * sizeof(unsigned char));
 					
-					pthread_create(&endpointThreads[endpoint++], NULL, ep_loop_thread, endpointInfo);
+					//pthread_create(&endpointThreads[endpoint++], NULL, ep_loop_thread, endpointInfo);
 					
 					printf("   | - bEndpointAddress   : 0x%02x\n", endpointDescriptor->bEndpointAddress);
 					printf("     - wMaxPacketSize     : %d\n", endpointDescriptor->wMaxPacketSize);
