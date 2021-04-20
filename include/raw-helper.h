@@ -179,7 +179,15 @@ struct usb_raw_int_io {
 };
 
 /*----------------------------------------------------------------------*/
-typedef struct {
+
+class RawGadgetPassthrough; // dirty
+
+struct EndpointZeroInfo;
+struct ConfigurationInfo;
+struct InterfaceInfo;
+struct AlternateInfo;
+
+typedef struct EndpointInfo {
 	int fd;	// raw_gadget descriptor
 	int ep_int;// endpoint handler
 	libusb_device_handle *deviceHandle;
@@ -192,33 +200,38 @@ typedef struct {
 	struct usb_endpoint_descriptor usb_endpoint;
 	int bIntervalInMicroseconds;
 	unsigned char* data;
+	
+	struct AlternateInfo* parent;
 } EndpointInfo;
 
-typedef struct {
+typedef struct AlternateInfo{
 //	bool active;
 	uint8_t bInterfaceNumber;
 	int bNumEndpoints;
 	EndpointInfo *mEndpointInfos;
 	
+	struct InterfaceInfo* parent;
 } AlternateInfo;
 
-typedef struct {
+typedef struct InterfaceInfo {
 //	bool active;
 	int activeAlternate;
 	int bNumAlternates;
 	AlternateInfo *mAlternateInfos;
 	
+	struct ConfigurationInfo* parent;
 } InterfaceInfo;
 
-typedef struct {
+typedef struct ConfigurationInfo {
 //	bool active;
 	int activeInterface;
 	int bNumInterfaces;
 	InterfaceInfo *mInterfaceInfos;
 	
+	struct EndpointZeroInfo* parent;
 } ConfigurationInfo;
 
-typedef struct {
+typedef struct EndpointZeroInfo {
 //	int totalEndpoints;
 //	EndpointInfo *mEndpointInfos;
 //	InterfaceInfo *mInterfaceInfos;
@@ -228,6 +241,8 @@ typedef struct {
 	int fd;
 	libusb_device_handle *dev_handle;
 	//struct libusb_config_descriptor* configDescriptor;
+	
+	RawGadgetPassthrough* parent;
 } EndpointZeroInfo;
 
 /*----------------------------------------------------------------------*/
