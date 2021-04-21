@@ -109,7 +109,8 @@ void process_eps_info(EndpointZeroInfo* epZeroInfo) {
 /*----------------------------------------------------------------------*/
 
 int usb_raw_open() {
-	int fd = open("/dev/raw-gadget", O_RDWR | O_NONBLOCK );
+	//int fd = open("/dev/raw-gadget", O_RDWR | O_NONBLOCK );
+	int fd = open("/dev/raw-gadget", O_RDWR );
 	if (fd < 0) {
 		perror("open()");
 		exit(EXIT_FAILURE);
