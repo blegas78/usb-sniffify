@@ -20,11 +20,11 @@ add_library(sniffify	src/raw-helper.cpp
 			include/raw-helper.h)
 
 #add_executable(passthroughc src/passthrough.c)
-add_executable(passthrough src/passthrough.cpp)
-add_executable(libusbhax src/libusbhax.c)
+#add_executable(passthrough src/passthrough.cpp)
+#add_executable(libusbhax src/libusbhax.c)
 #add_executable(hid src/hid.c)
 
 #target_link_libraries(passthroughc sniffifyc ${LIBUSB_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
-target_link_libraries(passthrough sniffify ${LIBUSB_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
-target_link_libraries(libusbhax ${LIBUSB_LIBRARIES} )
+#target_link_libraries(passthrough sniffify ${LIBUSB_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} m)
+#target_link_libraries(libusbhax ${LIBUSB_LIBRARIES} )
 #target_link_libraries(hid sniffifyc ${LIBUSB_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})

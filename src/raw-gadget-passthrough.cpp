@@ -42,7 +42,7 @@ int RawGadgetPassthrough::initialize() {
 		printf("libusb_get_device_list() Error\n");
 		return 1;
 	}
-	printf("%d Devioces.\n", deviceCount);
+	printf("%zd Devices.\n", deviceCount);
 	
 	int devIndex = -1;
 	for (int i = 0; i < deviceCount; i++) {
